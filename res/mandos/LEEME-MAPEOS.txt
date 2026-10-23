@@ -1,0 +1,10 @@
+Mapeos de mandos MIDI de Mixxx (https://mixxx.org), incluidos tal cual en Ramiro DJ.
+
+Origen: https://github.com/mixxxdj/mixxx/tree/300bd8967c4edaea38af9e32949be510f07b94f9/res/controllers (2026-10-20)
+Licencia: GNU General Public License, versión 2 o posterior (ver licencias/mixxx-mapeos-GPL-2.0.txt).
+Autores: los que figuran en cada archivo .midi.xml (etiqueta <author>) y la comunidad de Mixxx.
+
+144 mapeos MIDI y 132 scripts. Ramiro DJ los lee con su propio intérprete
+(QuickJS) y traduce los controles de Mixxx a los suyos (src/ui/mandos_puente.cpp).
+Para añadir o cambiar un mapeo sin recompilar, copia el .midi.xml y sus .js a
+%APPDATA%\RamiroDJ\mandos (tienen prioridad sobre los incluidos).

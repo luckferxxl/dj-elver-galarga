@@ -1,0 +1,28 @@
+#include <winver.h>
+IDI_APP ICON "djelvergalarga.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 0,11,1,0
+PRODUCTVERSION 0,11,1,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "0C0A04B0"
+    BEGIN
+      VALUE "FileDescription", "DJ Elver Galarga"
+      VALUE "ProductName", "DJ Elver Galarga"
+      VALUE "FileVersion", "0.11.1"
+      VALUE "ProductVersion", "0.11.1"
+      VALUE "OriginalFilename", "DJElverGalarga.exe"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0C0A, 1200
+  END
+END
+FONT_TEXT RCDATA "fonts/HankenGrotesk.ttf"
+FONT_HEAD RCDATA "fonts/BarlowSemiCondensed-SemiBold.ttf"
+FONT_BOLD RCDATA "fonts/BarlowSemiCondensed-Bold.ttf"

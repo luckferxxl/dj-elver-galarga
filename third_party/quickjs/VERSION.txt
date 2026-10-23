@@ -1,0 +1,1 @@
+QuickJS-ng v0.17.0 (commit 6d46d07d04041b40f4f49eaa7fdebe44c314c699), https://github.com/quickjs-ng/quickjs — solo los archivos del motor (sin quickjs-libc).

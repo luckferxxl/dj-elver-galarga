@@ -1,0 +1,43 @@
+SEPARADOR DE PISTAS (opcional)
+==============================
+
+Ramiro DJ NO incluye estos componentes en el instalador. Cuando el usuario pulsa
+"Instalar motor de separación" en el modo SEPARADOR, la aplicación crea un entorno
+de Python en %LOCALAPPDATA%\RamiroDJ\separador y descarga desde las fuentes oficiales:
+
+- Demucs 4 (Meta Platforms / Alexandre Défossez) — licencia MIT
+  https://github.com/adefossez/demucs  ·  https://pypi.org/project/demucs/
+  Modelos preentrenados htdemucs y htdemucs_6s publicados por los autores
+  (descarga automática de dl.fbaipublicfiles.com al primer uso).
+- PyTorch (versión solo CPU) — licencia BSD de 3 cláusulas
+  https://pytorch.org  ·  https://download.pytorch.org/whl/cpu
+- soundfile / libsndfile — licencias BSD / LGPL
+  https://pypi.org/project/soundfile/
+- Dependencias de Demucs desde PyPI (numpy, einops, julius, openunmix, lameenc,
+  dora-search, pyyaml, tqdm…), cada una con su propia licencia libre.
+
+Python debe estar instalado (3.10–3.13, https://www.python.org).
+
+Texto de la licencia MIT de Demucs:
+
+MIT License
+
+Copyright (c) Meta Platforms, Inc. and affiliates.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
