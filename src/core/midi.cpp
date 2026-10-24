@@ -115,8 +115,9 @@ const std::vector<MidiActionInfo>& midiActions() {
         {"rackpad15", "Sampler: pad 15", MidiKind::Boton, false},
         {"rackpad16", "Sampler: pad 16", MidiKind::Boton, false},
         {"quitarefectos", "Quitar todos los efectos y filtros", MidiKind::Boton, false},
+        {"quitarefectosplato", "Quitar los efectos del plato", MidiKind::Boton, true},
     };
-    static_assert(MA_Count == 105, "la tabla de acciones MIDI y el enum deben coincidir");
+    static_assert(MA_Count == 106, "la tabla de acciones MIDI y el enum deben coincidir");
     return a;
 }
 

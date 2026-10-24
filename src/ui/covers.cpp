@@ -295,8 +295,8 @@ double similarity(const std::string& want, const std::string& got) {
 struct Http {
     HINTERNET ses = nullptr;
     Http() {
-        ses = WinHttpOpen(L"DJElverGalarga/0.11.1", 4 /*WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY*/, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-        if (!ses) ses = WinHttpOpen(L"DJElverGalarga/0.11.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        ses = WinHttpOpen(L"DJElverGalarga/0.11.3", 4 /*WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY*/, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!ses) ses = WinHttpOpen(L"DJElverGalarga/0.11.3", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         if (ses) WinHttpSetTimeouts(ses, 6000, 6000, 8000, 10000);
     }
     ~Http() { if (ses) WinHttpCloseHandle(ses); }

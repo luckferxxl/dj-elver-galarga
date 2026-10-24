@@ -1,4 +1,4 @@
-# Rack de hardware virtual (DJ Elver Galarga 0.11.1)
+# Rack de hardware virtual (DJ Elver Galarga 0.11.3)
 
 Primera fase: **estación de efectos, pad XY, aislador de tres bandas y loop station**. Inspirados en cómo se usan los aparatos de efectos y loops que se enchufan a una mesa de mezclas (tipo RMX o Kaoss Pad), con diseño y código propios: no se copia ninguna marca, gráfico ni código de esos aparatos.
 

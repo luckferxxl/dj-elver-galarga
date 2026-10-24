@@ -991,8 +991,8 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
             const ImU32 remCol = ending ? col::mix(col::Red, col::Text, 0.35f * (1.f - blink)) : col::TextDim;
             dl->AddText(fontHead, 16 * s, ImVec2(tx + ew + 10 * s, ty + 3 * s), remCol, rem.c_str());
             float bx0 = tx + ew + 10 * s + fontHead->CalcTextSizeA(16 * s, FLT_MAX, 0, rem.c_str()).x + 12 * s;
-            // Chips de estado a la derecha
-            float chx = ix1;
+            // Chips de estado a la derecha. El primero (0.11.3): el botón de efectos del plato.
+            float chx = drawDeckFxButton(d, ix1, ty + 3 * s, 18 * s, std::max(40 * s, ix1 - bx0 - 4 * s), ix1 - bx0 - 116 * s);
             auto chip = [&](const char* txt, ImU32 c) {
                 const float w = BadgeWidth(18 * s, txt, fontHead, 12 * s);
                 chx -= w;
@@ -1014,7 +1014,6 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
                 chip(lb, engine_.deckStatus[d].syncLocked.load() || !engine_.deckStatus[d].playing.load() || !settings_.syncPhase ? col::Green : col::Amber);
             }
             if (dk.syncBadSince > 0 && now_ - dk.syncBadSince > 4.0) chip("¿REJILLA?", col::Amber);
-            if (p.fxOn.load() && p.fxType.load() != 0) chip("FX", col::Violet);
             // Subidón cercano (vuelve el bombo tras un corte de 4+ compases).
             if (dk.meta.bpm > 0 && settings_.waveStructure) {
                 const TrackShape& sh = trackShape(d);
@@ -1276,6 +1275,9 @@ void App::drawDeckTabs(int d, float x, float y, float w, float h) {
         const bool on = padMode_[d] == i, hov = ImGui::IsItemHovered();
         if (on) dl->AddRectFilled(ImVec2(ta.x + 2 * s, ta.y + 2 * s), ImVec2(tb.x - 2 * s, tb.y - 2 * s), col::mix(col::Panel2, acc, 0.22f), 5 * s);
         CenterText(dl, ta, tb, on ? col::Text : hov ? col::mix(col::TextDim, col::Text, 0.5f) : col::TextDim, names[i], fontHead, 13 * s);
+        // 0.11.3: punto ámbar en la pestaña que tiene algo puesto (efecto del plato en FX, REV en VINILO).
+        const bool lit = (i == 5 && p.fxOn.load() && p.fxType.load() != 0) || (i == 7 && p.reverse.load());
+        if (lit) dl->AddCircleFilled(ImVec2(tb.x - 7 * s, ta.y + 6 * s), 3.2f * s, col::Amber);
     }
     y += th + sp;
     const float rest = h - th - sp;
@@ -1734,9 +1736,9 @@ void App::drawStatusBar(ImVec2 a, ImVec2 b) {
         std::snprintf(midi, sizeof midi, "  ·  Mando: %s%s", name.c_str(), midi_.shiftHeld() ? " [SHIFT]" : "");
     }
     if (recorder_.active())
-        std::snprintf(r, sizeof r, "● Grabando %s%s  ·  DJ Elver Galarga 0.11.1", formatTime(recorder_.seconds(), false).c_str(), engine_.status.recDropped.load() ? " · ¡pérdidas!" : "");
+        std::snprintf(r, sizeof r, "● Grabando %s%s  ·  DJ Elver Galarga 0.11.3", formatTime(recorder_.seconds(), false).c_str(), engine_.status.recDropped.load() ? " · ¡pérdidas!" : "");
     else
-        std::snprintf(r, sizeof r, "%s · %s · %u Hz · %.1f ms · CPU %d %%%s  ·  DJ Elver Galarga 0.11.1", st.running ? st.deviceName.c_str() : "Sin audio", st.backend.c_str(),
+        std::snprintf(r, sizeof r, "%s · %s · %u Hz · %.1f ms · CPU %d %%%s  ·  DJ Elver Galarga 0.11.3", st.running ? st.deviceName.c_str() : "Sin audio", st.backend.c_str(),
                       st.sampleRate, latMs, (int)std::lround(engine_.status.cpuLoad.load() * 100), midi);
     const std::string rs = ellipsize(r, (b.x - a.x) * 0.45f, f, fs);
     const float rw = f->CalcTextSizeA(fs, FLT_MAX, 0, rs.c_str()).x;
@@ -2102,7 +2104,7 @@ void App::drawMidiDialog() {
         dl->AddRectFilled(p0, ImVec2(p0.x + 4 * s, p0.y + h), m.activo ? (m.errores ? col::Amber : col::Green) : col::Line, 8 * s, ImDrawFlags_RoundCornersLeft);
         ImGui::SetCursorScreenPos(ImVec2(p0.x + 14 * s, p0.y + 8 * s));
         ImGui::BeginGroup();
-        ImGui::PushFont(fontHead, 17.f * s);
+        ImGui::PushFont(fontHead, 17.f);   // ImGui ya aplica la escala de la pantalla
         ImGui::TextUnformatted(m.activo ? m.nombre.c_str() : m.puerto.c_str());
         ImGui::PopFont();
         if (m.activo) {
@@ -2324,7 +2326,7 @@ void App::drawAboutDialog() {
     if (!ImGui::Begin("Acerca de DJ Elver Galarga", &showAbout_, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) { ImGui::End(); return; }
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    DrawAppLogo(dl, ImVec2(p.x, p.y + 22 * s), 44 * s, fontBold, fontHead, "0.11.1");
+    DrawAppLogo(dl, ImVec2(p.x, p.y + 22 * s), 44 * s, fontBold, fontHead, "0.11.3");
     ImGui::Dummy(ImVec2(0, 52 * s));
     ImGui::TextUnformatted("Aplicación de DJ para Windows 10/11 (64 bits).");
     ImGui::TextUnformatted("Software libre: licencia GPL versión 2 o posterior (COPYING.txt). El código fuente va con cada versión.");

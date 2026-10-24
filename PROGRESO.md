@@ -1,5 +1,15 @@
 # DJ Elver Galarga (antes Ramiro DJ, Windows nativo) — Progreso
 
+## Versión 0.11.3 (24-10-2026): botón de efectos en cada plato
+Petición del usuario: «en la parte de los decks a veces se quedan también efectos encendidos y es difícil saber cuál es; también un botón en cada deck para que no salga».
+- `activeEffects(int onlyDeck)`: con un plato, su ruleta, su efecto, REV (nuevo `Reverso`, también en la lista general) y lo del rack/aislador cuyo origen es ese plato. Cada efecto lleva un nombre corto (`tag`) para el botón. `clearEffectsOf(d)` quita los de un plato (o todo con −1; `clearAllEffects()` lo usa).
+- `drawDeckFxButton()`: primer chip de la cabecera del plato (sustituye al chip «FX» violeta), gris «FX» o ámbar con el nombre / «N FX ×»; tooltip con la lista, clic = quitar los de ese plato, clic derecho = elegir. Punto ámbar en las pestañas FX y VINILO.
+- Acción MIDI `quitarefectosplato` (MA_DeckFxClear, por plato, en el rango del rack para poder asignarla en mandos con mapeo de Mixxx) con luz por plato.
+- Prueba en `--autotest`: 4 efectos en el plato A y 2 en el B; el botón del A quita los 4 y el B sigue con los suyos.
+
+## Versión 0.11.2 (23-10-2026): texto a escala alta
+- Visto al hacer capturas a 192 ppp para la web: `PushFont(nullptr, 11 * s)` (rack, bajo la MACRO) y `PushFont(fontHead, 17.f * s)` (mandos reconocidos) multiplicaban dos veces por la escala de la pantalla (ImGui 1.92 ya aplica `FontScaleDpi`). Ahora 11 y 17 sin escalar.
+
 ## Versión 0.11.1 (23-10-2026): botón QUITAR FX
 Petición del usuario: «tenemos que poner un botón que desactive los filtros arriba, ya que se quedan activados y con tantos no se sabe cuál es».
 - `ui_fxclear.cpp`: `activeEffects()` reúne lo que queda puesto (ruleta FILTER/COLOR fuera del centro, efecto del plato encendido, ranuras encendidas o encendidas por la macro/pad, MACRO > 1 %, HOLD del pad, aislador, movimiento grabado sonando); `clearEffect()` quita uno; `clearAllEffects()` todos (primero el movimiento, para que no vuelva a subir la macro). Botón en la barra superior a la izquierda de Grabar: ámbar con el número, tooltip con la lista, clic = quitar todo, clic derecho = elegir cuál.
@@ -377,7 +387,7 @@ Petición del usuario: «los ajustes de la consola no están bien, busca info y 
 ---
 (Lo siguiente corresponde a la versión 0.1.0.)
 
-Proyecto: `%USERPROFILE%\RamiroDJ-Win`. Es distinto de la versión web anterior, que está en `%USERPROFILE%\RamiroDJ` y no se ha tocado.
+Proyecto: `C:\Users\ramir\RamiroDJ-Win`. Es distinto de la versión web anterior, que está en `C:\Users\ramir\RamiroDJ` y no se ha tocado.
 Última actualización: 19-10-2026. Versión: **0.1.0**.
 
 ## Entregables

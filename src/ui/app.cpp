@@ -590,6 +590,7 @@ void App::pollMidi() {
         case MA_Brake: if(c.pressed) send(d,Cmd::Brake,1.0); break;
         case MA_Vinyl: if(c.pressed) p.vinyl=!p.vinyl.load(); break;
         case MA_FxOn: if (c.pressed) p.fxOn = !p.fxOn.load(); break;
+        case MA_DeckFxClear: if (c.pressed) clearEffectsOf(d); break;
         case MA_Volume: absolute(c, p.fader.load(), [&](float v) { p.fader = v; }); break;
         case MA_Gain: absolute(c, (p.gainDb.load() + 12.f) / 24.f, [&](float v) { p.gainDb = -12.f + 24.f * v; }); break;
         case MA_EqHigh: absolute(c, p.eqHigh.load(), [&](float v) { p.eqHigh = v; }); break;
@@ -1343,6 +1344,27 @@ void App::updateAutotest() {
                 check(before >= 4 && quitados == (int)before && clean,
                       "QUITAR FX: " + std::to_string(before) + " efectos y filtros puestos, " + std::to_string(quitados) + " quitados de un clic");
                 engine_.deck[0].fxType = 0;
+            }
+            {
+                // Botón de efectos del plato (0.11.3): quita solo lo del plato A (su efecto, REV, su ruleta y el
+                // rack si suena sobre A); el filtro del plato B y su efecto siguen puestos.
+                const int src0 = rp.stSrc.load();
+                const int t0 = rp.slot[0].type.load();
+                if (t0 == 0) rp.slot[0].type = 1;
+                rp.stSrc = 0; rp.slot[0].on = true;
+                engine_.deck[0].fxType = (int)FxType::Chorus; engine_.deck[0].fxOn = true;
+                engine_.deck[0].reverse = true; engine_.deck[0].filter = 0.4f;
+                engine_.deck[1].fxType = (int)FxType::Eco; engine_.deck[1].fxOn = true; engine_.deck[1].filter = -0.5f;
+                const size_t enA = activeEffects(0).size(), enB = activeEffects(1).size();
+                const int quitados = clearEffectsOf(0);
+                const bool aLimpio = activeEffects(0).empty() && !engine_.deck[0].reverse.load() && !rp.slot[0].on.load();
+                const bool bIntacto = engine_.deck[1].fxOn.load() && engine_.deck[1].filter.load() == -0.5f && activeEffects(1).size() == 2;
+                check(enA == 4 && enB == 2 && quitados == 4 && aLimpio && bIntacto,
+                      "Botón FX del plato A: " + std::to_string(quitados) + " quitados (efecto, REV, ruleta y rack sobre A); el plato B sigue con sus " +
+                          std::to_string(activeEffects(1).size()));
+                clearEffectsOf(1);
+                engine_.deck[0].fxType = 0; engine_.deck[1].fxType = 0;
+                rp.stSrc = src0; rp.slot[0].type = t0;
             }
             const std::string j1 = rackToJson();
             rackFromJson(j1);

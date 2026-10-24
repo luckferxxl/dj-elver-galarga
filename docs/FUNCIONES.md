@@ -361,3 +361,4 @@ Comprobadas con `rdj_tests` (carpetas y carátulas), `--autotest` (pasos «Naveg
 | 255 | Desplegable de efectos por familias, con descripción | ✅ |
 | 256 | Presets del rack con los efectos nuevos (5) | ✅ |
 | 257 | Botón QUITAR FX: cuántos efectos y filtros quedan puestos, cuáles, y quitarlos de un clic (también por MIDI) | ✅ (0.11.1) |
+| 258 | Botón de efectos en cada plato: qué efecto tiene puesto (siempre a la vista), quitar solo los de ese plato, punto en las pestañas FX y VINILO (también por MIDI) | ✅ (0.11.3) |

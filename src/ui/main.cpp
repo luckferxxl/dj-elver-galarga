@@ -2,7 +2,7 @@
 // Opciones: --separador, --biblioteca, --theme N, --null-audio, --autotest A B registro, --screenshot archivo.png,
 //           --pos segA segB, --play, --sync, --no-waves, --collapse (capturas de las ondas y del SYNC),
 //           --load A B, --browse carpeta, --add-folder carpeta, --sidelist archivo.m3u8 (capturas de pantalla),
-//           --fx-demo fxA fxB color ruletaA (0.11: pestaña FX de los platos y ruleta de color)
+//           --fx-demo fxA fxB color ruletaA (0.11: pestaña FX de los platos y ruleta de color), --fx-demo-tab N
 #include "app.h"
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
@@ -58,7 +58,7 @@ void writeCrashLog(DWORD code, const EXCEPTION_RECORD* rec, CONTEXT ctx) {
     };
     SYSTEMTIME st;
     GetLocalTime(&st);
-    put(snprintf(line, sizeof(line), "DJ Elver Galarga 0.11.1 · fallo %04d-%02d-%02d %02d:%02d:%02d · código 0x%08lx · hilo %lu\r\n",
+    put(snprintf(line, sizeof(line), "DJ Elver Galarga 0.11.3 · fallo %04d-%02d-%02d %02d:%02d:%02d · código 0x%08lx · hilo %lu\r\n",
                  st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, code, GetCurrentThreadId()));
     if (rec && rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec->NumberParameters >= 2)
         put(snprintf(line, sizeof(line), "  %s en 0x%llx\r\n", rec->ExceptionInformation[0] ? "escritura" : "lectura",
@@ -330,6 +330,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     bool rackDemo = false, rackXy = false, rackInstr = false;
     int fxDemoA = -1, fxDemoB = 0, fxDemoColor = 0;
     float fxDemoKnob = 0.f;
+    int fxDemoTab = 5;
     for (int i = 1; i < argc; ++i) {
         std::wstring a = argv[i];
         if (a == L"--null-audio") nullAudio = true;
@@ -356,6 +357,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         else if (a == L"--rack-xy") rackXy = true;
         else if (a == L"--rack-instr") rackInstr = true;
         else if (a == L"--fx-demo" && i + 4 < argc) { fxDemoA = _wtoi(argv[i + 1]); fxDemoB = _wtoi(argv[i + 2]); fxDemoColor = _wtoi(argv[i + 3]); fxDemoKnob = (float)_wtof(argv[i + 4]); i += 4; }
+        else if (a == L"--fx-demo-tab" && i + 1 < argc) { fxDemoTab = _wtoi(argv[++i]); }
     }
 
     ImGui_ImplWin32_EnableDpiAwareness();
@@ -464,7 +466,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                 app.demoStart(posA, posB, playBoth, syncB);
                 if (rackDemo) app.rackDemo(rdj::toUtf8(rackPreset), rackL, rackR, rackMacro, rackLoopBars, rackXy);
                 if (rackInstr) app.instrDemo();
-                if (fxDemoA >= 0) app.fxDemo(fxDemoA, fxDemoB, fxDemoColor, fxDemoKnob);
+                if (fxDemoA >= 0) app.fxDemo(fxDemoA, fxDemoB, fxDemoColor, fxDemoKnob, fxDemoTab);
             }
             if (!shot.empty() && loadedAt >= 0 && frameNo >= loadedAt + 30 && elapsed() >= shotDelay) { saveScreenshot(shot); done = true; }
             if (frameNo > 60 * 60) done = true;

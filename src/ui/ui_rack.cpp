@@ -418,6 +418,7 @@ void App::rackLeds() {
     const bool blink = std::fmod(now_, 0.5) < 0.25;
     midi_.setLed(MA_RackFxOff, 0, p.fxCut.load());
     midi_.setLed(MA_FxClearAll, 0, !activeEffects().empty());
+    for (int d = 0; d < kNumDecks; ++d) midi_.setLed(MA_DeckFxClear, d, !activeEffects(d).empty());
     midi_.setLed(MA_RackXyHold, 0, p.xyHold.load());
     for (int k = 0; k < kStSlots; ++k) midi_.setLed(MA_RackSlot1On + k, 0, st.slotOnEff[k].load());
     midi_.setLed(MA_RackIsoOn, 0, p.isoOn.load());
@@ -529,10 +530,10 @@ void App::rackDemo(const std::string& preset, int left, int right, float macro, 
     if (touchXy) { engine_.rack.params.xyX = 0.27f; engine_.rack.params.xyY = 0.68f; engine_.rack.params.xyHold = true; engine_.rack.params.xyTouch = true; }
 }
 
-void App::fxDemo(int fxA, int fxB, int color, float knobA) {
+void App::fxDemo(int fxA, int fxB, int color, float knobA, int tab) {
     const int fx[2] = {fxA, fxB};
     for (int d = 0; d < kNumDecks; ++d) {
-        padMode_[d] = 5;   // pestaña FX
+        padMode_[d] = std::clamp(tab, 0, 7);   // 5: pestaña FX
         engine_.deck[d].fxType = std::clamp(fx[d], 0, (int)FxType::Count - 1);
         engine_.deck[d].fxOn = fx[d] > 0;
         engine_.deck[d].colorFx = std::clamp(color, 0, (int)ColorFxType::Count - 1);
@@ -787,7 +788,7 @@ void App::drawRackStation(ImVec2 a, ImVec2 b) {
             ImGui::SetCursorScreenPos(ImVec2(a.x, ty));
             ImGui::PushStyleColor(ImGuiCol_Text, toVec4(col::TextDim));
             ImGui::PushTextWrapPos(a.x + macroW);
-            ImGui::PushFont(nullptr, 11 * s);
+            ImGui::PushFont(nullptr, 11.f);   // ImGui ya aplica la escala de la pantalla (antes 11·s: enorme al 200 %)
             ImGui::TextUnformatted("Clic derecho en una ranura: qué mueve la macro");
             ImGui::PopFont();
             ImGui::PopTextWrapPos();

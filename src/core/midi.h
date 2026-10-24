@@ -47,6 +47,8 @@ enum MidiAct : int {
     MA_RackPad9, MA_RackPad10, MA_RackPad11, MA_RackPad12, MA_RackPad13, MA_RackPad14, MA_RackPad15, MA_RackPad16,
     // 0.11.1: quitar de golpe todos los efectos y filtros que queden puestos (botón QUITAR FX). Global; va por rackMidi.
     MA_FxClearAll,
+    // 0.11.3: quitar los efectos de un plato (por plato; se asigna como las del rack en mandos con mapeo de Mixxx).
+    MA_DeckFxClear,
     MA_Count
 };
 inline bool isRackAction(int a) { return a >= MA_RackFxOff && a < MA_Count; }

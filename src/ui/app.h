@@ -114,7 +114,7 @@ public:
     // Capturas del rack: --rack "preset" izquierda derecha macro [--rack-loop compases]
     void instrDemo();   // capturas: estilos cargados y caja de ritmos y bajo sonando
     void rackDemo(const std::string& preset, int left, int right, float macro, int loopBars, bool touchXy);
-    void fxDemo(int fxA, int fxB, int color, float knobA);   // 0.11: capturas de la pestaña FX y de la ruleta de color
+    void fxDemo(int fxA, int fxB, int color, float knobA, int tab = 5);   // 0.11: capturas de la pestaña FX y de la ruleta de color
 
     ImFont* fontBig = nullptr;   // = fontHead (compatibilidad)
     ImFont* fontHead = nullptr;  // Barlow Semi Condensed seminegrita: rótulos, títulos, BPM
@@ -307,14 +307,18 @@ private:
     void motionTick();
     // Botón «QUITAR FX» de la barra superior (ui_fxclear.cpp, 0.11.1).
     struct ActiveFx {
-        std::string what;
-        enum Kind { Ruleta, FxPlato, Ranura, Macro, PadXy, Aislador, Movimiento } kind;
+        std::string what;   // frase completa (tooltip y lista)
+        std::string tag;    // nombre corto para el botón del plato
+        enum Kind { Ruleta, FxPlato, Ranura, Macro, PadXy, Aislador, Movimiento, Reverso } kind;
         int index;
     };
-    std::vector<ActiveFx> activeEffects() const;
+    std::vector<ActiveFx> activeEffects(int onlyDeck = -1) const;
     void clearEffect(const ActiveFx& e);
+    int clearEffectsOf(int d);   // d < 0: todo
     int clearAllEffects();
     void drawFxClearButton(float& rx, float by, float bh);
+    // maxW: lo más ancho que puede ser; roomyW: ancho que deja sitio al contador de compases.
+    float drawDeckFxButton(int d, float right, float y, float h, float maxW, float roomyW);   // 0.11.3: botón de efectos de cada plato
     void drawMotionControls(ImVec2 a, float w, float h = 0);
     bool motionBeat(int d, double& beat) const;
     // Instrumentos del rack (ui_instruments.cpp; el audio está en audio/instruments.*)

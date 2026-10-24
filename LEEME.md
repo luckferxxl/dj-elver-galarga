@@ -1,8 +1,20 @@
-# DJ Elver Galarga 0.11.1
+# DJ Elver Galarga 0.11.3
 
 Aplicación de DJ para Windows 10/11 (64 bits): dos platos, mezclador, biblioteca, grabación de la mezcla y MIDI.
 
 Es **software libre** (licencia GPL versión 2 o posterior, ver `COPYING.txt`); el código fuente va con cada versión.
+
+## Novedades de la 0.11.3: botón de efectos en cada plato
+- En la cabecera de cada plato, a la derecha de los tiempos, hay un botón de efectos que está **siempre a la vista**, también en las pestañas CUES, LOOP, SALTO, etc.:
+  - en gris **FX**: ese plato no tiene nada puesto;
+  - en ámbar **con el nombre** del efecto («Sidechain ×», «SPACE ×», «REV ×», «Rack: Freeze ×») o con cuántos hay («3 FX ×»).
+- Pasa el ratón para ver la lista. **Clic**: quita los efectos **solo de ese plato**: su efecto (pestaña FX), REV, su ruleta FILTER/COLOR y el rack o el aislador si suenan sobre ese plato. El otro plato no se toca. **Clic derecho**: elegir cuál quitar.
+- Las pestañas **FX** y **VINILO** llevan un punto ámbar mientras tienen algo puesto (efecto del plato encendido, REV encendido).
+- Mando MIDI: nueva acción por plato «Quitar los efectos del plato», con luz mientras quede alguno puesto.
+- El botón QUITAR FX de arriba sigue quitándolo todo, y ahora cuenta también el REV.
+
+## Novedades de la 0.11.2
+- Corregido: con Windows al 200 % (pantallas 4K o portátiles con escala alta), el texto bajo la MACRO del rack y el nombre de los mandos reconocidos salían enormes.
 
 ## Novedades de la 0.11.1: botón QUITAR FX
 - Arriba, a la izquierda de **Grabar**, el botón **QUITAR FX** se enciende en ámbar y dice cuántos efectos o filtros se han quedado puestos. Pasa el ratón por encima para ver **cuáles** son (ruletas FILTER/COLOR de los canales, efecto de cada plato, ranuras del rack, MACRO, pad XY en HOLD, aislador y movimiento grabado).
