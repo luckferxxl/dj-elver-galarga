@@ -18,6 +18,9 @@ namespace rdj {
 TrackPtr decodeFile(const std::wstring& path, std::string& err, std::atomic<float>* progress = nullptr,
                     const std::atomic<bool>* cancel = nullptr);
 
+// Importación de un golpe: limita duración antes de reservar/decodificar todo.
+TrackPtr decodeDrumSample(const std::wstring& path,std::string& err);
+
 struct LoadJob {
     int deck = 0;
     uint32_t id = 0;

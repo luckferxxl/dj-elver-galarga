@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(RamiroDJ VERSION 0.11.3 LANGUAGES C CXX)
+project(RamiroDJ VERSION 0.15.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -95,3 +95,25 @@ enable_testing()
 add_test(NAME core COMMAND rdj_tests)
 add_test(NAME performance COMMAND rdj_performance_tests)
 add_test(NAME covers COMMAND rdj_cover_tests)
+
+# Historial retrospectivo: prueba portable, sin dispositivos de audio.
+find_package(Threads REQUIRED)
+add_executable(rdj_retrospective_tests tests/retrospective.cpp)
+target_link_libraries(rdj_retrospective_tests PRIVATE Threads::Threads ${RDJ_STATIC})
+target_compile_options(rdj_retrospective_tests PRIVATE -UNDEBUG)
+add_test(NAME retrospective COMMAND rdj_retrospective_tests)
+add_executable(rdj_live_tests tests/live.cpp)
+target_link_libraries(rdj_live_tests PRIVATE rdj_core Threads::Threads ${RDJ_STATIC})
+add_test(NAME live COMMAND rdj_live_tests)
+
+add_executable(rdj_workbench_tests tests/workbench.cpp)
+target_link_libraries(rdj_workbench_tests PRIVATE rdj_core Threads::Threads ${RDJ_STATIC})
+add_test(NAME workbench COMMAND rdj_workbench_tests)
+
+add_executable(rdj_drum_pro_tests tests/drum_pro.cpp)
+target_link_libraries(rdj_drum_pro_tests PRIVATE rdj_core Threads::Threads ${RDJ_STATIC})
+add_test(NAME drum_pro COMMAND rdj_drum_pro_tests)
+
+add_executable(rdj_drum_decode_tests tests/drum_decode.cpp src/core/tags.cpp src/core/util.cpp)
+target_link_libraries(rdj_drum_decode_tests PRIVATE rdj_core shell32 normaliz Threads::Threads ${RDJ_STATIC})
+add_test(NAME drum_decode COMMAND rdj_drum_decode_tests)

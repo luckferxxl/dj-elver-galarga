@@ -13,6 +13,9 @@
 #include <cstring>
 #include <future>
 #include <filesystem>
+#include <chrono>
+#include "../audio/recorder.h"
+#include "../audio/slice.h"
 
 namespace rdj {
 
@@ -95,12 +98,52 @@ void App::setPad(int k, TrackPtr t, const std::string& name, const std::wstring&
     if (k < 0 || k >= kPads) return;
     PadSlot& ps = pads_[k];
     const uint32_t gen = ++padGenCounter_;
+    Command c{Cmd::RackPad, 0};
+    c.i=k; c.d=3; c.track=t.get(); c.gen=gen;
+    if (!engine_.send(c)) { notify("Cola de audio ocupada: vuelve a cargar el pad.",true); return; }
     if (ps.track) padRetire_.push_back({k, gen, ps.track});   // se libera cuando el audio confirma la nueva
     ps.track = std::move(t);
     ps.name = name; ps.path = path; ps.builtin = builtin;
-    Command c{Cmd::RackPad, 0};
-    c.i = k; c.d = 3; c.track = ps.track.get(); c.gen = gen;
-    engine_.send(c);
+    if (ps.track) ps.cleared=false;
+}
+
+void App::captureToPad(int k, unsigned seconds) {
+    if (k < 0 || k >= kPads || pads_[k].loading) return;
+    auto t = std::make_shared<Track>();
+    if (!engine_.retrospective.capture(seconds, t->pcm)) {
+        notify("Todavía no hay audio para capturar o el historial cambió. Vuelve a intentarlo.", true);
+        return;
+    }
+    t->sampleRate = (uint32_t)engine_.sampleRate();
+    t->frames = t->pcm.size() / 2;
+    t->meta.durationSec = t->lengthSec();
+    const auto stamp = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::string name = "Captura " + std::to_string(stamp);
+    const std::filesystem::path dir = recordingFolder();
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) { notify("No se pudo crear la carpeta de capturas: " + ec.message(), true); return; }
+    const std::wstring path = (dir / (name + ".wav")).wstring();
+    std::vector<float> L(t->frames), R(t->frames);
+    // Fundidos de 3 ms en ambos extremos para evitar clics al disparar el pad.
+    const uint64_t fade = std::max<uint64_t>(1, t->sampleRate * 3 / 1000);
+    for (uint64_t i = 0; i < t->frames; ++i) {
+        const float gain = std::min(1.f, float(std::min(i, t->frames - 1 - i)) / float(fade));
+        L[i] = t->pcm[i * 2] *= gain;
+        R[i] = t->pcm[i * 2 + 1] *= gain;
+        t->maxPeak = std::max(t->maxPeak, std::max(std::fabs(L[i]), std::fabs(R[i])));
+    }
+    std::string err;
+    if (!writeWavStereoFloat(path, L.data(), R.data(), t->frames, t->sampleRate, err)) {
+        notify(err, true); return;
+    }
+    t->path = path; t->title = name;
+    setPad(k, t, name, path, -1);
+    pads_[k].cleared = false;
+    library_.addFiles({path});
+    library_.addToPlaylist(ensurePlaylist("Grabaciones"), {path});
+    notify("Capturados " + std::to_string(t->lengthSec()) + " s en el pad " + std::to_string(k + 1) + ". WAV guardado en Grabaciones.");
 }
 
 void App::loadPadFile(int k, const std::wstring& path) {
@@ -164,7 +207,10 @@ std::string App::instrToJson() const {
     }
     json voices = json::object();
     for (int t = 0; t < kDrumTracks; ++t)
-        voices[drumVoiceId(t)] = {{"nivel", p.dLevel[t].load()}, {"afinacion", p.dTune[t].load()}, {"caida", p.dDecay[t].load()}, {"silencio", p.dMute[t].load()}};
+        voices[drumVoiceId(t)] = {{"nivel", p.dLevel[t].load()}, {"afinacion", p.dTune[t].load()}, {"caida", p.dDecay[t].load()}, {"silencio", p.dMute[t].load()}, {"solo",p.dSolo[t].load()},
+            {"ataqueMs",p.dAttackMs[t].load()},{"holdMs",p.dHoldMs[t].load()},{"decayMs",p.dDecayMs[t].load()},
+            {"pitchEnv",p.dPitchEnv[t].load()},{"pitchEnvMs",p.dPitchEnvMs[t].load()},{"cutHz",p.dCutHz[t].load()},
+            {"drive",p.dDrive[t].load()},{"pan",p.dPan[t].load()},{"choke",p.dChoke[t].load()}};
     j["ritmos"] = {{"patron", p.drumPattern.load()}, {"swing", p.swing.load()}, {"volumen", p.drumVol.load()}, {"patrones", pats}, {"sonidos", voices}};
     json bpats = json::array();
     for (int pt = 0; pt < kBassPatterns; ++pt) {
@@ -184,6 +230,12 @@ std::string App::instrToJson() const {
         else pj["vacio"] = true;
         pads.push_back(pj);
     }
+    json edits=json::array();
+    for(int k=0;k<kPads;++k)edits.push_back({{"pitch",p.padPitch[k].load()},{"reverse",p.padReverse[k].load()},
+        {"start",p.padStart[k].load()},{"end",p.padEnd[k].load()},{"attack",p.padAttack[k].load()},{"release",p.padRelease[k].load()},{"choke",p.padChoke[k].load()}});
+    j["edicionPads"]=edits;
+    json probabilities=json::array();for(int t=0;t<kDrumTracks;++t)probabilities.push_back(p.dProbability[t].load());
+    j["probabilidades"]=probabilities;j["humanizarIntensidad"]=p.humanizeVelocity.load();
     j["sampler"] = {{"volumen", p.samplerVol.load()}, {"loopsEnElPulso", p.padQuant.load()}, {"pads", pads}};
     return j.dump();
 }
@@ -220,7 +272,11 @@ bool App::instrFromJson(const std::string& text) {
             for (int t = 0; t < kDrumTracks; ++t) {
                 if (!d["sonidos"].contains(drumVoiceId(t))) continue;
                 const json& v = d["sonidos"][drumVoiceId(t)];
-                p.dLevel[t] = f01(v, "nivel", 0.8f); p.dTune[t] = f01(v, "afinacion", 0.5f); p.dDecay[t] = f01(v, "caida", 0.5f); p.dMute[t] = v.value("silencio", false);
+                p.dLevel[t] = f01(v, "nivel", 0.8f); p.dTune[t] = f01(v, "afinacion", 0.5f); p.dDecay[t] = f01(v, "caida", 0.5f); p.dMute[t] = v.value("silencio", false);p.dSolo[t]=v.value("solo",false);
+                auto param=[&](const char* key,float lo,float hi,float def){return v.contains(key)&&v[key].is_number()?safeParam(v[key].get<float>(),lo,hi,def):def;};
+                p.dAttackMs[t]=param("ataqueMs",.2f,200,.5f);p.dHoldMs[t]=param("holdMs",0,500,0);p.dDecayMs[t]=param("decayMs",5,5000,t==3?90:t==7?2000:600);
+                p.dPitchEnv[t]=param("pitchEnv",-24,24,0);p.dPitchEnvMs[t]=param("pitchEnvMs",2,1000,50);p.dCutHz[t]=param("cutHz",100,20000,18000);
+                p.dDrive[t]=param("drive",0,1,0);p.dPan[t]=param("pan",-1,1,0);p.dChoke[t]=v.contains("choke")&&v["choke"].is_number_integer()?std::clamp(v["choke"].get<int>(),0,4):((t==3||t==4)?1:0);
             }
     }
     if (j.contains("bajo") && j["bajo"].is_object()) {
@@ -253,6 +309,19 @@ bool App::instrFromJson(const std::string& text) {
                 else if (pj.value("vacio", false) && (ps.track || ps.builtin >= 0)) { setPad(k, nullptr, "", L"", -1); ps.cleared = true; }
             }
     }
+    if(j.contains("edicionPads") && j["edicionPads"].is_array()) {
+        for(int k=0;k<kPads && k<int(j["edicionPads"].size());++k){
+            const auto& x=j["edicionPads"][k];if(!x.is_object())continue;
+            auto number=[&](const char* key,float lo,float hi,float def){return x.contains(key)&&x[key].is_number()?safeParam(x[key].get<float>(),lo,hi,def):def;};
+            p.padPitch[k]=number("pitch",-24,24,0);p.padStart[k]=number("start",0,.999f,0);p.padEnd[k]=number("end",.001f,1,1);
+            p.padAttack[k]=number("attack",.2f,250,2);p.padRelease[k]=number("release",1,1000,10);
+            p.padReverse[k]=x.contains("reverse")&&x["reverse"].is_boolean()&&x["reverse"].get<bool>();
+            p.padChoke[k]=x.contains("choke")&&x["choke"].is_number_integer()?std::clamp(x["choke"].get<int>(),0,4):0;
+        }
+    }
+    if(j.contains("probabilidades")&&j["probabilidades"].is_array())for(int t=0;t<kDrumTracks&&t<int(j["probabilidades"].size());++t)
+        if(j["probabilidades"][t].is_number())p.dProbability[t]=safeParam(j["probabilidades"][t].get<float>(),0,1,1);
+    if(j.contains("humanizarIntensidad")&&j["humanizarIntensidad"].is_number())p.humanizeVelocity=safeParam(j["humanizarIntensidad"].get<float>(),0,.5f,0);
     return true;
 }
 
@@ -342,6 +411,8 @@ void App::drawRackDrums(ImVec2 a, ImVec2 b) {
     ImGui::SetCursorScreenPos(ImVec2(x, a.y));
     ImGui::SetNextItemWidth(108 * s);
     if (ImGui::BeginCombo("##drstyle", "Estilos…", ImGuiComboFlags_HeightLarge)) {
+        if(ImGui::Selectable("CAJA PRO: kits y envolventes…"))drumStudioOpen_=true;
+        ImGui::Separator();
         for (const DrumStyle& ds : kDrumStyles)
             if (ImGui::Selectable(ds.name)) {
                 p.drumSteps[pat] = ds.steps;
@@ -400,6 +471,7 @@ void App::drawRackDrums(ImVec2 a, ImVec2 b) {
         if (ImGui::BeginPopup("voz")) {
             ImGui::PushFont(fontHead, 13.f);
             ImGui::TextUnformatted(drumVoiceName(t));
+            if(ImGui::Button("Abrir CAJA PRO")){drumEditVoice_=t;drumStudioOpen_=true;}
             ImGui::PopFont();
             float lv = p.dLevel[t].load(), tu = p.dTune[t].load(), dc = p.dDecay[t].load();
             ImGui::SetNextItemWidth(180 * s);
@@ -622,7 +694,7 @@ void App::drawRackSampler(ImVec2 a, ImVec2 b) {
         if (ImGui::IsItemActivated()) { padSel_ = k; if (has) { padCmd(k, 1); padHeld_[k] = true; } }
         if (padHeld_[k] && !ImGui::IsItemActive()) { padCmd(k, 0); padHeld_[k] = false; }
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { padSel_ = k; ImGui::OpenPopup("padmenu"); }
-        ImGui::SetItemTooltip("%s · %s\nClic: tocar · clic derecho: cargar, modo, volumen · también puedes soltar aquí un archivo", has ? ps.name.c_str() : "Vacío",
+        ImGui::SetItemTooltip("%s · %s\nClic: tocar · clic derecho: capturar mezcla, cargar, modo, volumen · también puedes soltar aquí un archivo", has ? ps.name.c_str() : "Vacío",
                               modeTxt[std::clamp(mode, 0, 2)]);
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("RDJ_PISTA")) {
@@ -635,9 +707,24 @@ void App::drawRackSampler(ImVec2 a, ImVec2 b) {
             ImGui::PushFont(fontHead, 13.f);
             ImGui::Text("PAD %d", k + 1);
             ImGui::PopFont();
+            if(ImGui::MenuItem("Editar tono, reversa y recorte…")){editPad_=k;workbenchOpen_=true;}
             if (ImGui::MenuItem("Cargar un archivo de audio…")) {
                 auto f = win::pickAudioFiles(hwnd_, false);
                 if (!f.empty()) loadPadFile(k, f[0]);
+            }
+            if (ImGui::BeginMenu("Capturar mezcla reciente al pad", !ps.loading)) {
+                ImGui::TextDisabled("Sustituye este pad; guarda un WAV");
+                for (unsigned seconds : {5u, 10u, 20u, 30u}) {
+                    const std::string label = "Últimos " + std::to_string(seconds) + " segundos";
+                    if (ImGui::MenuItem(label.c_str())) captureToPad(k, seconds);
+                }
+                ImGui::EndMenu();
+            }
+            if (has && ImGui::BeginMenu("Trocear muestra en 8 pads")) {
+                ImGui::TextWrapped("Crea ocho fragmentos iguales y guarda los WAV. Sustituye las muestras del banco elegido.");
+                if (ImGui::MenuItem("Sustituir pads 1–8")) slicePadToBank(k,0);
+                if (ImGui::MenuItem("Sustituir pads 9–16")) slicePadToBank(k,1);
+                ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Sonidos incluidos")) {
                 for (int fx = 0; fx < kFxSamples; ++fx) if (ImGui::MenuItem(fxSampleName(fx))) setPad(k, makeFxSample(fx, 48000), fxSampleName(fx), L"", fx);
@@ -696,6 +783,37 @@ void App::drawRackSampler(ImVec2 a, ImVec2 b) {
         ImGui::SetItemTooltip("Parar todos los pads");
     }
     if (y + 52 * s < b.y) instrClockBar(ImVec2(sx, y + 30 * s), sideW, 22 * s);
+}
+
+void App::slicePadToBank(int source, int bank) {
+    if (source<0 || source>=kPads || bank<0 || bank>1 || !pads_[source].track) return;
+    for (int i=bank*8;i<bank*8+8;++i) if(pads_[i].loading) { notify("Espera a que terminen de cargar los pads del banco.",true); return; }
+    auto pieces=sliceSample(*pads_[source].track,8);
+    if(pieces.size()!=8) { notify("La muestra es demasiado corta para trocearla.",true); return; }
+    const auto stamp=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const auto dir=std::filesystem::path(recordingFolder());
+    std::error_code ec; std::filesystem::create_directories(dir,ec);
+    if(ec) { notify("No se pudo crear la carpeta de muestras.",true); return; }
+    std::vector<std::wstring> paths;
+    for (int i=0;i<8;++i) {
+        auto& t=pieces[i];
+        t->title="Trozo " + std::to_string(i+1);
+        t->path=(dir / ("Slices-"+std::to_string(stamp)+"-"+std::to_string(i+1)+".wav")).wstring();
+        std::vector<float> L(t->frames),R(t->frames);
+        for (uint64_t j=0;j<t->frames;++j) { L[j]=t->pcm[j*2]; R[j]=t->pcm[j*2+1]; }
+        std::string err;
+        if(!writeWavStereoFloat(t->path,L.data(),R.data(),t->frames,t->sampleRate,err)) { notify(err,true); return; }
+        paths.push_back(t->path);
+    }
+    for (int i=0;i<8;++i) {
+        const int pad=bank*8+i;
+        setPad(pad,pieces[i],pieces[i]->title,paths[i],-1);
+        auto& pp=engine_.rack.instr.params;
+        pp.padMode[pad]=PM_Disparo;pp.padPitch[pad]=0;pp.padReverse[pad]=false;pp.padStart[pad]=0;pp.padEnd[pad]=1;
+        pp.padAttack[pad]=2;pp.padRelease[pad]=10;pp.padChoke[pad]=0;
+    }
+    library_.addFiles(paths); library_.addToPlaylist(ensurePlaylist("Grabaciones"),paths);
+    notify("Ocho fragmentos guardados y asignados a los pads " + std::to_string(bank*8+1) + "–" + std::to_string(bank*8+8));
 }
 
 } // namespace rdj

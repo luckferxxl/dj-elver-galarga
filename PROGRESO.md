@@ -1,3 +1,15 @@
+# Ampliación 0.15.0
+
+Caja PRO implementada con kits propios, samples, envolventes, controles por voz, MIDI y bancos personales. Pruebas de audio y decodificación WAV ejecutadas; sintaxis de interfaz comprobada. Windows e interacción pendientes. Véase `docs/NOVEDADES-0.15.0.md`. Los estados que siguen son históricos.
+
+# Ampliación 0.14.0
+
+Taller con edición de sampler, loops por archivo, metrónomo de preescucha y herramientas de patrones. Se han ejecutado pruebas del motor y comprobaciones de sintaxis; Windows e interacción pendientes. Véase `docs/NOVEDADES-0.14.0.md`. Los estados de versiones anteriores que siguen son históricos.
+
+# Ampliación 0.13.0
+
+Implementadas herramientas LIVE, tres efectos nuevos en rack/platos, EQ/FX por pista del Separador y troceado a pads. Véase `docs/NOVEDADES-0.13.0.md`. Pruebas portables y de sintaxis realizadas; Windows y hardware pendientes. Los estados de versiones anteriores que siguen debajo son históricos.
+
 # DJ Elver Galarga (antes Ramiro DJ, Windows nativo) — Progreso
 
 ## Versión 0.11.3 (24-10-2026): botón de efectos en cada plato

@@ -58,7 +58,7 @@ void writeCrashLog(DWORD code, const EXCEPTION_RECORD* rec, CONTEXT ctx) {
     };
     SYSTEMTIME st;
     GetLocalTime(&st);
-    put(snprintf(line, sizeof(line), "DJ Elver Galarga 0.11.3 · fallo %04d-%02d-%02d %02d:%02d:%02d · código 0x%08lx · hilo %lu\r\n",
+    put(snprintf(line, sizeof(line), "DJ Elver Galarga 0.15.0 · fallo %04d-%02d-%02d %02d:%02d:%02d · código 0x%08lx · hilo %lu\r\n",
                  st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, code, GetCurrentThreadId()));
     if (rec && rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec->NumberParameters >= 2)
         put(snprintf(line, sizeof(line), "  %s en 0x%llx\r\n", rec->ExceptionInformation[0] ? "escritura" : "lectura",

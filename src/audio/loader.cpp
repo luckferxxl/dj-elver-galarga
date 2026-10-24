@@ -12,7 +12,7 @@ namespace {
 constexpr uint64_t kMaxSeconds = 45 * 60;  // límite de memoria: ~1 GB a 48 kHz
 }
 
-TrackPtr decodeFile(const std::wstring& path, std::string& err, std::atomic<float>* progress, const std::atomic<bool>* cancel) {
+static TrackPtr decodeBounded(const std::wstring& path, std::string& err, std::atomic<float>* progress, const std::atomic<bool>* cancel, uint64_t limitSeconds) {
     ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 2, 0);
     ma_decoder dec;
     ma_result r = ma_decoder_init_file_w(path.c_str(), &cfg, &dec);
@@ -33,9 +33,9 @@ TrackPtr decodeFile(const std::wstring& path, std::string& err, std::atomic<floa
     t->sampleRate = sr;
     ma_uint64 total = 0;
     if (ma_decoder_get_length_in_pcm_frames(&dec, &total) != MA_SUCCESS) total = 0;
-    if (total > kMaxSeconds * sr) {
+    if (total > limitSeconds * sr) {
         ma_decoder_uninit(&dec);
-        err = "La pista es demasiado larga (máximo 45 minutos).";
+        err = limitSeconds==10?"El sample supera los 10 segundos.":"La pista es demasiado larga (máximo 45 minutos).";
         return nullptr;
     }
     try {
@@ -48,7 +48,7 @@ TrackPtr decodeFile(const std::wstring& path, std::string& err, std::atomic<floa
             r = ma_decoder_read_pcm_frames(&dec, tmp.data(), chunk, &got);
             if (got) t->pcm.insert(t->pcm.end(), tmp.begin(), tmp.begin() + (size_t)got * 2);
             if (progress && total) progress->store(std::min(1.f, (float)(t->pcm.size() / 2) / (float)total));
-            if (t->pcm.size() / 2 > kMaxSeconds * sr) { ma_decoder_uninit(&dec); err = "La pista es demasiado larga (máximo 45 minutos)."; return nullptr; }
+            if (t->pcm.size() / 2 > limitSeconds * sr) { ma_decoder_uninit(&dec); err = limitSeconds==10?"El sample supera los 10 segundos.":"La pista es demasiado larga (máximo 45 minutos)."; return nullptr; }
             if (r != MA_SUCCESS || got < chunk) break;
         }
     } catch (const std::bad_alloc&) {
@@ -58,13 +58,20 @@ TrackPtr decodeFile(const std::wstring& path, std::string& err, std::atomic<floa
     }
     ma_decoder_uninit(&dec);
     t->frames = t->pcm.size() / 2;
-    if (t->frames < sr / 10) {
+    if (t->frames < (limitSeconds==10?2:sr/10)) {
         err = "El archivo no contiene audio utilizable.";
         return nullptr;
     }
     // Sustituye NaN/Inf (archivos corruptos) por silencio.
     for (float& v : t->pcm) if (!std::isfinite(v)) v = 0.f;
     return t;
+}
+
+TrackPtr decodeFile(const std::wstring& path,std::string& err,std::atomic<float>* progress,const std::atomic<bool>* cancel) {
+    return decodeBounded(path,err,progress,cancel,kMaxSeconds);
+}
+TrackPtr decodeDrumSample(const std::wstring& path,std::string& err) {
+    return decodeBounded(path,err,nullptr,nullptr,10);
 }
 
 std::vector<double> decoderOffsetCandidates(const std::wstring& path, double sr) {

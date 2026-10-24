@@ -116,8 +116,35 @@ const std::vector<MidiActionInfo>& midiActions() {
         {"rackpad16", "Sampler: pad 16", MidiKind::Boton, false},
         {"quitarefectos", "Quitar todos los efectos y filtros", MidiKind::Boton, false},
         {"quitarefectosplato", "Quitar los efectos del plato", MidiKind::Boton, true},
+        {"scene1", "LIVE: lanzar escena 1", MidiKind::Boton, false},
+        {"scene2", "LIVE: lanzar escena 2", MidiKind::Boton, false},
+        {"scene3", "LIVE: lanzar escena 3", MidiKind::Boton, false},
+        {"scene4", "LIVE: lanzar escena 4", MidiKind::Boton, false},
+        {"scene5", "LIVE: lanzar escena 5", MidiKind::Boton, false},
+        {"scene6", "LIVE: lanzar escena 6", MidiKind::Boton, false},
+        {"scene7", "LIVE: lanzar escena 7", MidiKind::Boton, false},
+        {"scene8", "LIVE: lanzar escena 8", MidiKind::Boton, false},
+        {"savedloop1", "Loop guardado: memoria 1", MidiKind::Boton, true},
+        {"savedloop2", "Loop guardado: memoria 2", MidiKind::Boton, true},
+        {"savedloop3", "Loop guardado: memoria 3", MidiKind::Boton, true},
+        {"savedloop4", "Loop guardado: memoria 4", MidiKind::Boton, true},
+        {"savedloop5", "Loop guardado: memoria 5", MidiKind::Boton, true},
+        {"savedloop6", "Loop guardado: memoria 6", MidiKind::Boton, true},
+        {"savedloop7", "Loop guardado: memoria 7", MidiKind::Boton, true},
+        {"savedloop8", "Loop guardado: memoria 8", MidiKind::Boton, true},
+        {"drumhit1", "Batería: tocar voz 1", MidiKind::Boton, false},
+        {"drumhit2", "Batería: tocar voz 2", MidiKind::Boton, false},
+        {"drumhit3", "Batería: tocar voz 3", MidiKind::Boton, false},
+        {"drumhit4", "Batería: tocar voz 4", MidiKind::Boton, false},
+        {"drumhit5", "Batería: tocar voz 5", MidiKind::Boton, false},
+        {"drumhit6", "Batería: tocar voz 6", MidiKind::Boton, false},
+        {"drumhit7", "Batería: tocar voz 7", MidiKind::Boton, false},
+        {"drumhit8", "Batería: tocar voz 8", MidiKind::Boton, false},
+
+
+
     };
-    static_assert(MA_Count == 106, "la tabla de acciones MIDI y el enum deben coincidir");
+    static_assert(MA_Count == 130, "la tabla de acciones MIDI y el enum deben coincidir");
     return a;
 }
 

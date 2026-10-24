@@ -1,4 +1,21 @@
-# DJ Elver Galarga 0.11.3
+# DJ Elver Galarga 0.15.0
+
+## Novedad 0.15.0: CAJA PRO
+24 kits / 192 sonidos de síntesis propia, mezcla de fuentes, samples propios, envolventes de volumen y tono, filtro/drive/pan/solo, MIDI y hasta 128 bancos personales con importación/exportación JSON.
+Acceso: LIVE → TALLER → CAJA PRO. Manual y validación: `docs/NOVEDADES-0.15.0.md`. Código fuente; falta validar Windows.
+
+## Novedad 0.14.0: TALLER
+Sampler con afinación, reversa, recorte, envolvente y grupos de corte; ocho loops por canción con MIDI; metrónomo de preescucha; probabilidad e intensidad variable de batería; generador, rotación, copia y deshacer de patrones.
+Acceso: LIVE → TALLER. Manual y validación: `docs/NOVEDADES-0.14.0.md`. Entrega de código fuente, sin EXE validado.
+
+## Novedad 0.13.0: herramientas LIVE
+Ocho escenas con lanzamiento MIDI, transiciones de macro, tres efectos nuevos, EQ/FX por pista del Separador y troceado de muestras a ocho pads.
+Lee `docs/NOVEDADES-0.13.0.md` para uso, pruebas y límites. Entrega de código fuente; falta validar Windows.
+
+## Novedad 0.12.0
+Captura los últimos 5–30 segundos del master a un pad del sampler y guarda el WAV.
+Acceso: RACK → SAMPLER → clic derecho en un pad → Capturar mezcla reciente al pad.
+Consulta `docs/NOVEDADES-0.12.0.md` para uso, pruebas y limitaciones.
 
 Aplicación de DJ para Windows 10/11 (64 bits): dos platos, mezclador, biblioteca, grabación de la mezcla y MIDI.
 

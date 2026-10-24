@@ -8,7 +8,7 @@ namespace rdj {
 
 // Los de Riser en adelante (0.11) los procesa una ranura como las del rack (StUnit, rack.h), en el mismo orden que StFx.
 enum class FxType : int { Ninguno = 0, Eco = 1, Flanger = 2, Reverb = 3, EchoOut, Gate, AutoFilter, Phaser, Bitcrusher, Distortion,
-                          Riser, Spiral, Sidechain, Shimmer, Vinilo, Telefono, Chorus, Tremolo, AutoPan, Freeze, Slicer, Count };
+                          Riser, Spiral, Sidechain, Shimmer, Vinilo, Telefono, Chorus, Tremolo, AutoPan, Freeze, Slicer, Granular, Resonador, Multibanda, Count };
 
 inline const char* fxName(FxType t) {
     switch (t) {
@@ -33,6 +33,9 @@ inline const char* fxName(FxType t) {
     case FxType::AutoPan: return "Auto-pan";
     case FxType::Freeze: return "Freeze";
     case FxType::Slicer: return "Slicer";
+    case FxType::Granular: return "Granular";
+    case FxType::Resonador: return "Resonador cromático";
+    case FxType::Multibanda: return "Saturación multibanda";
     default: return "?";
     }
 }

@@ -19,6 +19,9 @@ const char* rackSrcName(int s) {
 
 const char* stFxName(int t) {
     switch ((StFx)t) {
+    case StFx::Granular: return "Granular";
+    case StFx::Resonador: return "Resonador cromático";
+    case StFx::Multibanda: return "Saturación multibanda";
     case StFx::Ninguno: return "Vacía";
     case StFx::Filtro: return "Filtro";
     case StFx::Eco: return "Eco";
@@ -50,6 +53,9 @@ const char* stFxName(int t) {
 
 const char* stFxDescription(int t) {
     switch ((StFx)t) {
+    case StFx::Granular: return "Cuatro granos superpuestos; intensidad recorre -12 a +12 semitonos.";
+    case StFx::Resonador: return "Resonancia cromática: intensidad selecciona notas de La2 a La4.";
+    case StFx::Multibanda: return "Satura medios y agudos conservando la banda grave por debajo de 120 Hz.";
     case StFx::Ninguno: return "Ranura sin efecto.";
     case StFx::Filtro: return "Filtro DJ: a la izquierda paso bajo, a la derecha paso alto.";
     case StFx::Eco: return "Eco sincronizado; cada repetición, algo más oscura.";
@@ -82,7 +88,7 @@ const char* stFxDescription(int t) {
 const char* stFxId(int t) {
     static const char* ids[] = {"ninguno", "filtro", "eco", "delay", "reverb", "flanger", "phaser", "gate", "saturacion", "distorsion",
                                 "ecocinta", "reverblarga", "bitcrusher", "repetidor",
-                                "riser", "spiral", "sidechain", "shimmer", "vinilo", "telefono", "chorus", "tremolo", "autopan", "freeze", "slicer"};
+                                "riser", "spiral", "sidechain", "shimmer", "vinilo", "telefono", "chorus", "tremolo", "autopan", "freeze", "slicer", "granular", "resonador", "multibanda"};
     static_assert(sizeof(ids) / sizeof(ids[0]) == (size_t)StFx::Count, "falta el identificador de algún efecto");
     return t >= 0 && t < (int)StFx::Count ? ids[t] : "ninguno";
 }
@@ -94,6 +100,8 @@ int stFxFromId(const std::string& id) {
 
 const char* stFxAmountLabel(int t) {
     switch ((StFx)t) {
+    case StFx::Granular: case StFx::Resonador: return "AFINACIÓN";
+    case StFx::Multibanda: return "DRIVE";
     case StFx::Filtro: return "FILTRO";
     case StFx::Eco: case StFx::Delay: return "REPETIC.";
     case StFx::Reverb: return "TAMAÑO";
@@ -127,7 +135,7 @@ bool stFxUsesTime(int t) {
            t == (int)StFx::EcoCinta || t == (int)StFx::Repetidor || t == (int)StFx::Riser || t == (int)StFx::Spiral || t == (int)StFx::Sidechain ||
            t == (int)StFx::Tremolo || t == (int)StFx::AutoPan || t == (int)StFx::Slicer;
 }
-bool stFxNeedsHistory(int t) { return t == (int)StFx::Repetidor || t == (int)StFx::Freeze || t == (int)StFx::Slicer; }
+bool stFxNeedsHistory(int t) { return t == (int)StFx::Granular || t == (int)StFx::Repetidor || t == (int)StFx::Freeze || t == (int)StFx::Slicer; }
 
 bool stFxDivAllowed(int t, int div) {
     if (div < 0 || div >= kStDivs) return false;
@@ -179,6 +187,8 @@ std::string stFxAmountText(int t, float a) {
     case StFx::Filtro:
         std::snprintf(b, sizeof b, a < 0.48f ? "Paso bajo %.0f %%" : a > 0.52f ? "Paso alto %.0f %%" : "Sin filtro", std::fabs(a - 0.5f) * 200);
         break;
+    case StFx::Granular: std::snprintf(b,sizeof b,"Granos: %+.0f semitonos",std::round(a*24-12)); break;
+    case StFx::Resonador: std::snprintf(b,sizeof b,"Resonancia: %.1f Hz",110.*std::pow(2.,std::round(a*24)/12.)); break;
     case StFx::Spiral: std::snprintf(b, sizeof b, "Sube %+.0f semitonos por repetición", spiralSemis(a)); break;
     case StFx::Slicer: std::snprintf(b, sizeof b, "Patrón %d de %d", slicerPattern(a) + 1, kSlicerPatterns); break;
     case StFx::Freeze: std::snprintf(b, sizeof b, "Trozo de %.0f ms", 30.0 * std::pow(500.0 / 30.0, (double)a)); break;
@@ -279,6 +289,7 @@ void StUnit::prepare(double fs, uint32_t seed) {
     fs_ = fs;
     seed_ = seed ? seed : 1u;
     shift_.prepare(8192);
+    creative_.prepare(fs);
     hbCap_ = (int)(fs * 2.75) + 8;
     hbL_.assign(hbCap_, 0.f); hbR_.assign(hbCap_, 0.f);
     filter_.prepare(fs);
@@ -295,6 +306,7 @@ void StUnit::prepare(double fs, uint32_t seed) {
 }
 
 void StUnit::reset() {
+    creative_.reset();
     filter_.reset();
     reverb_.reset();
     flanger_.reset();
@@ -343,6 +355,8 @@ void StUnit::wet(const float* inL, const float* inR, int n, float a0, float a1, 
     const float inv = n > 0 ? 1.f / n : 0.f;
     FxContext c; c.fs = fs_; c.bpm = bpm;
     switch ((StFx)curType_) {
+    case StFx::Granular: case StFx::Resonador: case StFx::Multibanda:
+        creative_.process(wL_, wR_, n, curType_ - (int)StFx::Granular, amt); break;
     case StFx::Filtro: filter_.process(wL_, wR_, n, std::clamp(amt * 2.f - 1.f, -1.f, 1.f)); break;
     case StFx::Flanger: flanger_.process(wL_, wR_, n, c, beats, 1.f, 0.3f + 0.7f * amt, 0.3f + 0.55f * amt); break;
     case StFx::Phaser: perf_.process(wL_, wR_, n, FxType::Phaser, 1.f, beats, bpm, 0.3f + 0.7f * amt); break;

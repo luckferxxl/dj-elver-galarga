@@ -7,6 +7,7 @@
 // la interfaz la primera vez que se usa (allocLoop) para no gastarla si no se usa.
 #pragma once
 #include "dsp.h"
+#include "creative_fx.h"
 #include "effects.h"
 #include "instruments.h"
 #include <array>
@@ -28,6 +29,7 @@ enum class StFx : int { Ninguno = 0, Filtro, Eco, Delay, Reverb, Flanger, Phaser
                        EcoCinta, ReverbLarga, Bitcrusher, Repetidor,
                        // 0.11.0
                        Riser, Spiral, Sidechain, Shimmer, Vinilo, Telefono, Chorus, Tremolo, AutoPan, Freeze, Slicer,
+                       Granular, Resonador, Multibanda,
                        Count };   // los nuevos van al final (los presets guardan el id)
 const char* stFxName(int t);
 const char* stFxId(int t);                 // identificador estable (presets)
@@ -47,7 +49,7 @@ int slicerPattern(float amount);
 
 // Efecto del plato (FxType) → efecto de la estación equivalente (0 = lo procesa FxSlot, como siempre).
 inline int deckFxToStation(int fxt) {
-    static_assert((int)FxType::Slicer - (int)FxType::Riser == (int)StFx::Slicer - (int)StFx::Riser, "FxType y StFx deben ir en el mismo orden");
+    static_assert((int)FxType::Count - (int)FxType::Riser == (int)StFx::Count - (int)StFx::Riser, "FxType y StFx deben ir en el mismo orden");
     return fxt >= (int)FxType::Riser && fxt < (int)FxType::Count ? (int)StFx::Riser + (fxt - (int)FxType::Riser) : 0;
 }
 // «Cantidad» del plato → intensidad y mezcla de la ranura: mueve la ruleta principal; en los de cola, cuánto se oye.
@@ -202,6 +204,7 @@ private:
     int quiet_ = 0;                       // muestras seguidas casi en silencio
     float tmpL_[kRackBlock], tmpR_[kRackBlock], wL_[kRackBlock], wR_[kRackBlock], gArr_[kRackBlock], xArr_[kRackBlock];
     // Efectos (los de los platos se reutilizan: filtro, reverb, flanger, phaser, gate)
+    CreativeFx creative_;
     DjFilter filter_;
     Reverb reverb_;
     Flanger flanger_;

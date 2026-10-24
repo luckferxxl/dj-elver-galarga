@@ -1,6 +1,6 @@
 ; Instalador de DJ Elver Galarga (antes Ramiro DJ) (Inno Setup 6). Se compila desde compilar.ps1.
 #define AppName "DJ Elver Galarga"
-#define AppVersion "0.11.3"
+#define AppVersion "0.15.0"
 #define AppExe "DJElverGalarga.exe"
 
 [Setup]
