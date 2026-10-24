@@ -3,8 +3,6 @@
 #pragma once
 #include "../audio/audio_io.h"
 #include "../audio/engine.h"
-#include "../audio/performance_tools.h"
-#include "../audio/pattern_tools.h"
 #include "../audio/loader.h"
 #include "../audio/recorder.h"
 #include "../core/library.h"
@@ -280,7 +278,7 @@ private:
     bool rackFromJson(const std::string& text);
     void rackBuiltinPresets();
     void loadRack();
-    bool saveRack();
+    void saveRack();
     void rackApplyPreset(int i);
     void rackPresetStep(int dir);
     struct RackPreset { std::string name, data; bool builtin = false; std::string note; };
@@ -307,60 +305,11 @@ private:
         double userMacroAt = -10;
     } motion_;
     void motionTick();
-    struct LiveScene { std::string name, rack, instruments; bool drums=false, bass=false; };
-    std::array<LiveScene,8> scenes_{};
-    bool liveOpen_=false, sceneQuant_=true;
-    int pendingScene_=-1, sceneDeck_=0;
-    char sceneName_[64]={};
-    BarLaunch sceneLaunch_, transitionLaunch_;
-    bool transitionRunning_=false;
-    int transitionBars_=8, transitionDeck_=0;
-    double transitionStart_=0, transitionLastBeat_=0;
-    float transitionTarget_=1, transitionFrom_=0, transitionLast_=0;
-    struct SavedLoop { double begin=-1,end=-1; };
-    std::unordered_map<std::wstring,std::array<SavedLoop,8>> savedLoops_;
-    bool workbenchOpen_=false,patternCanUndo_=false;
-    int editPad_=0,patternSeed_=1234,patternUndoIndex_=0,patternUndoSteps_=16;
-    float patternDensity_=.5f;
-    RhythmPattern patternUndo_{};
-    struct DrumSoundSlot {TrackPtr track;int factory=-1;std::wstring path;};
-    struct DrumSoundRetired {int voice;uint32_t gen;TrackPtr track;};
-    struct DrumUserBank {std::string name,data;};
-    struct DrumBankResult {std::array<TrackPtr,8> samples{};std::string data,name,error;};
-    std::array<DrumSoundSlot,8> drumSamples_{};
-    std::vector<DrumSoundRetired> drumRetired_;
-    std::vector<DrumUserBank> drumUserBanks_;
-    std::future<DrumBankResult> drumLoad_;
-    uint32_t drumGen_=0;
-    bool drumStudioOpen_=false,drumInitialized_=false;
-    int drumEditVoice_=0;
-    char drumBankName_[64]={};
-    std::string drumKitName_,drumPending_;
-    std::string captureDrumBank()const;
-    std::string factoryDrumBank(int kit)const;
-    void startDrumBank(const std::string& data,const std::string& name);
-    void drumLibraryTick();
-    void drawDrumStudio();
-    std::string drumLibraryToJson()const;
-    void drumLibraryFromJson(const std::string& text);
-    void drawWorkbench();
-    void saveDeckLoop(int d,int slot);
-    void recallDeckLoop(int d,int slot);
-    std::string workbenchToJson() const;
-    void workbenchFromJson(const std::string& text);
-    void drawLiveWindow();
-    void liveTick();
-    void sceneSave(int i);
-    void sceneApply(int i);
-    void sceneLaunch(int i);
-    std::string scenesToJson() const;
-    void scenesFromJson(const std::string& text);
-    void slicePadToBank(int source, int bank);
     // Botón «QUITAR FX» de la barra superior (ui_fxclear.cpp, 0.11.1).
     struct ActiveFx {
         std::string what;   // frase completa (tooltip y lista)
         std::string tag;    // nombre corto para el botón del plato
-        enum Kind { Ruleta, FxPlato, Ranura, Macro, PadXy, Aislador, Movimiento, Reverso, StemFx, Automatizacion } kind;
+        enum Kind { Ruleta, FxPlato, Ranura, Macro, PadXy, Aislador, Movimiento, Reverso } kind;
         int index;
     };
     std::vector<ActiveFx> activeEffects(int onlyDeck = -1) const;
@@ -381,7 +330,6 @@ private:
     bool instrFromJson(const std::string& text);
     void setPad(int k, TrackPtr t, const std::string& name, const std::wstring& path, int builtin);
     void loadPadFile(int k, const std::wstring& path);
-    void captureToPad(int k, unsigned seconds);
     void padsTick();
     void padCmd(int pad, int action);
     void initPads();

@@ -41,12 +41,6 @@ std::vector<App::ActiveFx> App::activeEffects(int onlyDeck) const {
             v.push_back({b, colorFxLabel(p.colorFx.load()), ActiveFx::Ruleta, d});
         }
     }
-    if (onlyDeck<0) {
-        for (int k=0;k<kStemSlots;++k) if(engine_.stem.fx[k].on.load() && engine_.stem.fx[k].type.load()>0)
-            v.push_back({"Separador: FX de pista " + std::to_string(k+1),"STEM FX",ActiveFx::StemFx,k});
-        if (transitionRunning_ || transitionLaunch_.armed() || sceneLaunch_.armed())
-            v.push_back({"LIVE: transición o escena preparada","LIVE",ActiveFx::Automatizacion,0});
-    }
     const RackParams& rp = engine_.rack.params;
     const RackStatus& st = engine_.rack.status;
     const bool rackHere = onlyDeck < 0 || rp.stSrc.load() == onlyDeck;   // la estación del rack suena en este plato
@@ -77,9 +71,6 @@ std::vector<App::ActiveFx> App::activeEffects(int onlyDeck) const {
 void App::clearEffect(const ActiveFx& e) {
     RackParams& rp = engine_.rack.params;
     switch (e.kind) {
-    case ActiveFx::StemFx: engine_.stem.fx[e.index].on=false; break;
-    case ActiveFx::Automatizacion:
-        transitionRunning_=false; transitionLaunch_.cancel(); sceneLaunch_.cancel(); pendingScene_=-1; break;
     case ActiveFx::Ruleta: engine_.deck[e.index].filter = 0.f; break;
     case ActiveFx::FxPlato: engine_.deck[e.index].fxOn = false; break;
     case ActiveFx::Reverso: engine_.deck[e.index].reverse = false; reverseHeld_[e.index] = false; break;

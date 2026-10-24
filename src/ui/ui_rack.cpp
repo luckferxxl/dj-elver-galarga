@@ -13,9 +13,6 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 namespace rdj {
 
@@ -124,13 +121,7 @@ std::string App::rackToJson() const {
                 {"cruceBajo", p.isoLowHz.load()}, {"cruceAlto", p.isoHighHz.load()}};
     json lp = {{"fuente", srcId(p.lpSrc.load())}, {"compases", p.lpBars.load()}, {"volumen", p.lpVol.load()}, {"cuantizar", p.lpQuant.load()},
                {"seguirBpm", p.lpFollow.load()}, {"auriculares", p.lpCue.load()}, {"reproducirAlTerminar", p.lpAutoPlay.load()}};
-    json stems=json::array();
-    for (int k=0;k<kStemSlots;++k) {
-        const auto& f=engine_.stem.fx[k];
-        stems.push_back({{"low",engine_.stem.low[k].load()},{"mid",engine_.stem.mid[k].load()},{"high",engine_.stem.high[k].load()},
-            {"type",stFxId(f.type.load())},{"on",f.on.load()},{"amount",f.amount.load()},{"mix",f.mix.load()},{"div",f.div.load()}});
-    }
-    return json{{"estacion", st}, {"xy", xy}, {"aislador", iso}, {"loop", lp}, {"stemFx",stems},{"stemBpm",engine_.stem.bpm.load()}}.dump();
+    return json{{"estacion", st}, {"xy", xy}, {"aislador", iso}, {"loop", lp}}.dump();
 }
 
 // Aplica un estado o preset. Lo que no viene en el JSON se queda como está.
@@ -197,16 +188,6 @@ bool App::rackFromJson(const std::string& text) {
         p.lpQuant = l.value("cuantizar", true); p.lpFollow = l.value("seguirBpm", true);
         p.lpCue = l.value("auriculares", false); p.lpAutoPlay = l.value("reproducirAlTerminar", false);
     }
-    if (j.contains("stemBpm") && j["stemBpm"].is_number()) engine_.stem.bpm=std::clamp(j["stemBpm"].get<float>(),40.f,220.f);
-    if (j.contains("stemFx") && j["stemFx"].is_array()) {
-        for (int k=0;k<kStemSlots && k<int(j["stemFx"].size());++k) {
-            const auto& x=j["stemFx"][k]; if(!x.is_object()) continue;
-            auto& f=engine_.stem.fx[k];
-            engine_.stem.low[k]=f01(x,"low",.5f); engine_.stem.mid[k]=f01(x,"mid",.5f); engine_.stem.high[k]=f01(x,"high",.5f);
-            f.type=stFxFromId(x.value("type",std::string("ninguno"))); f.on=x.value("on",false);
-            f.amount=f01(x,"amount",.5f); f.mix=f01(x,"mix",.5f); f.div=std::clamp(x.value("div",6),0,kStDivs-1);
-        }
-    }
     return true;
 }
 
@@ -221,7 +202,6 @@ const std::vector<StFxGroup>& stFxGroups() {
         {"Eco y espacio", {(int)F::Eco, (int)F::Delay, (int)F::EcoCinta, (int)F::Spiral, (int)F::Reverb, (int)F::ReverbLarga, (int)F::Shimmer, -1}},
         {"Modulación", {(int)F::Flanger, (int)F::Phaser, (int)F::Chorus, (int)F::Tremolo, (int)F::AutoPan, -1}},
         {"Ritmo y cortes", {(int)F::Gate, (int)F::Sidechain, (int)F::Repetidor, (int)F::Slicer, (int)F::Freeze, -1}},
-        {"Texturas y carácter", {(int)F::Granular, (int)F::Resonador, (int)F::Multibanda, -1}},
         {"Subidas", {(int)F::Riser, -1}},
     };
     return g;
@@ -334,21 +314,15 @@ void App::loadRack() {
     if (j.contains("actual")) rackFromJson(j["actual"].dump());
     rackPresetName_ = j.value("preset", std::string());
     if (j.contains("instrumentos")) instrFromJson(j["instrumentos"].dump());
-    if (j.contains("escenas")) scenesFromJson(j["escenas"].dump());
-    if (j.contains("loopsGuardados")) workbenchFromJson(j["loopsGuardados"].dump());
-    if (j.contains("bancosBateria")) drumLibraryFromJson(j["bancosBateria"].dump());
     initPads();
     rackSaved_ = rackToJson() + instrToJson();
 }
 
-bool App::saveRack() {
+void App::saveRack() {
     json j;
     j["actual"] = json::parse(rackToJson());
     j["preset"] = rackPresetName_;
     j["instrumentos"] = json::parse(instrToJson());
-    j["escenas"] = json::parse(scenesToJson());
-    j["loopsGuardados"] = json::parse(workbenchToJson());
-    j["bancosBateria"] = json::parse(drumLibraryToJson());
     json arr = json::array();
     for (auto& p : rackPresets_) if (!p.builtin) arr.push_back({{"nombre", p.name}, {"datos", json::parse(p.data, nullptr, false)}});
     j["presets"] = arr;
@@ -358,18 +332,10 @@ bool App::saveRack() {
     {
         std::ofstream f(std::filesystem::path(tmp), std::ios::binary);
         f << j.dump(2);
-        if (!f) { notify("No se pudo guardar el rack y las escenas.",true); return false; }
+        if (!f) return;
     }
-#ifdef _WIN32
-    if (!MoveFileExW(tmp.c_str(),rackFile().c_str(),MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        notify("No se pudo actualizar el archivo del rack y las escenas.",true); return false;
-    }
-#else
     std::filesystem::rename(std::filesystem::path(tmp), rackFile(), ec);
-    if(ec) { notify("No se pudo actualizar el rack y las escenas: " + ec.message(),true); return false; }
-#endif
     rackSaved_ = rackToJson() + instrToJson();
-    return true;
 }
 
 void App::rackApplyPreset(int i) {
@@ -429,9 +395,7 @@ void App::rackLoopExport() {
 void App::rackTick() {
     RackParams& p = engine_.rack.params;
     padsTick();
-    drumLibraryTick();
     motionTick();
-    liveTick();
     if (rackMidiXyTouch_ && !rackMidiTouchHeld_ && !rackMouseXy_ && now_ - rackMidiXyAt_ > 0.8) {
         rackMidiXyTouch_ = false;
         p.xyTouch = false;
@@ -472,9 +436,6 @@ void App::rackLeds() {
 // Órdenes MIDI del rack. absolute: el ayudante de pollMidi con recogida de valor (soft takeover).
 void App::rackMidi(const MidiCommand& c, const std::function<void(const MidiCommand&, float, const std::function<void(float)>&)>& absolute) {
     RackParams& p = engine_.rack.params;
-    if(c.action>=MA_DrumHit1&&c.action<=MA_DrumHit8){if(c.pressed){Command q{Cmd::DrumHit};q.i=c.action-MA_DrumHit1;q.d=c.value>0?c.value:1;engine_.send(q);}return;}
-    if(c.action>=MA_SavedLoop1 && c.action<=MA_SavedLoop8){if(c.pressed)recallDeckLoop(c.deck,c.action-MA_SavedLoop1);return;}
-    if (c.action>=MA_Scene1 && c.action<=MA_Scene8) { if(c.pressed) sceneLaunch(c.action-MA_Scene1); return; }
     auto toggle = [](std::atomic<bool>& b) { b = !b.load(); };
     switch (c.action) {
     case MA_RackFxOff: if (c.pressed) toggle(p.fxCut); break;
@@ -583,9 +544,6 @@ void App::fxDemo(int fxA, int fxB, int color, float knobA, int tab) {
 // =================================================================== dibujo
 
 void App::drawRack(ImVec2 a, ImVec2 b, bool open) {
-    drawDrumStudio();
-    drawWorkbench();
-    drawLiveWindow();
     const float s = S();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     RackParams& p = engine_.rack.params;
@@ -606,9 +564,7 @@ void App::drawRack(ImVec2 a, ImVec2 b, bool open) {
         }
         ImGui::SetItemTooltip(open ? "Plegar el rack" : noRoom ? "No cabe con las alturas elegidas: clic para ajustarlas solas y desplegarlo" : "Desplegar el rack");
         x += 28 * s;
-        ImGui::SetCursorScreenPos(ImVec2(x,y));
-        if (ImGui::Button("LIVE",ImVec2(48*s,22*s))) liveOpen_=!liveOpen_;
-        ImGui::SetItemTooltip("Abrir banco de 8 escenas y transiciones de macro");
+        dl->AddText(fontBold, 16 * s, ImVec2(x, a.y + (hh - 16 * s) * 0.5f), col::Text, "RACK");
         x += fontBold->CalcTextSizeA(16 * s, FLT_MAX, 0, "RACK").x + 12 * s;
         // Pilotos de actividad de cada módulo
         bool fxAny = false;
@@ -759,9 +715,6 @@ bool App::rackSource(const char* id, std::atomic<int>& v, float w, float h) {
 }
 
 void App::drawRackStation(ImVec2 a, ImVec2 b) {
-    drawDrumStudio();
-    drawWorkbench();
-    drawLiveWindow();
     const float s = S();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     RackParams& p = engine_.rack.params;
@@ -974,9 +927,6 @@ void App::drawRackStation(ImVec2 a, ImVec2 b) {
 }
 
 void App::drawRackXy(ImVec2 a, ImVec2 b) {
-    drawDrumStudio();
-    drawWorkbench();
-    drawLiveWindow();
     const float s = S();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     RackParams& p = engine_.rack.params;
@@ -1080,9 +1030,6 @@ void App::drawRackXy(ImVec2 a, ImVec2 b) {
 }
 
 void App::drawRackIsolator(ImVec2 a, ImVec2 b) {
-    drawDrumStudio();
-    drawWorkbench();
-    drawLiveWindow();
     const float s = S();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     RackParams& p = engine_.rack.params;
@@ -1154,9 +1101,6 @@ void App::drawRackIsolator(ImVec2 a, ImVec2 b) {
 }
 
 void App::drawRackLooper(ImVec2 a, ImVec2 b) {
-    drawDrumStudio();
-    drawWorkbench();
-    drawLiveWindow();
     const float s = S();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     RackParams& p = engine_.rack.params;

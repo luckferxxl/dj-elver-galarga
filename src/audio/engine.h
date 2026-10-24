@@ -7,7 +7,6 @@
 #include "effects.h"
 #include "rack.h"
 #include "track.h"
-#include "retrospective.h"
 #include <array>
 #include <atomic>
 #include "stretch.h"
@@ -75,9 +74,7 @@ enum class Cmd : uint8_t {
     StemLoad, StemPlay, StemPause, StemSeek, RollStart, RollEnd, Backspin, Brake,
     SetHotCueAt,  // i = hot cue, d = posición (fotogramas; se cuantiza si Q está activo)
     RackLoop,     // loop station del rack: i = orden (Rack::LoopCmd), d = argumento (compases)
-    RackPad,      // sampler del rack
-    RecallLoop,   // d = inicio, end = final en fotogramas
-    DrumSample, DrumHit
+    RackPad       // sampler del rack: i = pad, d = 1 pulsar, 0 soltar, 2 parar todo, 3 cambiar muestra (track, gen)
 };
 
 struct Command {
@@ -88,7 +85,6 @@ struct Command {
     Track* track = nullptr;
     uint32_t gen = 0;
     const struct StemSet* stems = nullptr;  // StemLoad
-    double end = 0; // RecallLoop
 };
 
 // Reproductor de stems (modo Separador): hasta 6 pistas sincronizadas.
@@ -102,10 +98,7 @@ struct StemParams {
     std::array<std::atomic<bool>, kStemSlots> mute, solo;
     std::atomic<float> volume{0.9f};
     std::atomic<bool> pfl{false};                     // también a los auriculares
-    std::atomic<float> bpm{120.f}; // reloj de efectos del Separador, ajustable
-    StSlotParams fx[kStemSlots];
-    std::array<std::atomic<float>, kStemSlots> low{}, mid{}, high{};
-    StemParams() { for (int i = 0; i < kStemSlots; ++i) { gain[i] = 1.f; mute[i] = false; solo[i] = false; low[i] = mid[i] = high[i] = .5f; } }
+    StemParams() { for (int i = 0; i < kStemSlots; ++i) { gain[i] = 1.f; mute[i] = false; solo[i] = false; } }
 };
 struct StemStatus {
     std::atomic<double> posFrames{0};
@@ -124,9 +117,6 @@ struct MixerParams {
     std::atomic<float> hpVol{0.7f};
     std::atomic<float> hpMix{0.0f};  // 0 = solo preescucha, 1 = solo master
     std::atomic<int> hpRouting{(int)HpRouting::Ninguna};
-    std::atomic<bool> cueClick{false};
-    std::atomic<int> cueClickDeck{0};
-    std::atomic<float> cueClickVol{.15f};
     std::atomic<bool> recording{false};
 };
 
@@ -234,7 +224,6 @@ public:
     SpscFloatRing hpRing;    // auriculares cuando van a otro dispositivo
     StemParams stem;
     StemStatus stemStatus;
-    Retrospective retrospective; // últimos 30 segundos del master
     Rack rack;               // rack de hardware virtual (rack.h): params/status y memoria de loops
 
     // Hilo de audio. out tiene outChannels canales intercalados.
@@ -256,7 +245,6 @@ private:
     double fs_ = 48000;
     SpscQueue<Command> queue_{1024};
     DeckEngine decks_[kNumDecks];
-    CueMetronome cueClick_;
     Limiter limiter_, hpLimiter_;
     float dL_[kNumDecks][kMaxBlock], dR_[kNumDecks][kMaxBlock];
     float mL_[kMaxBlock], mR_[kMaxBlock], cL_[kMaxBlock], cR_[kMaxBlock], hL_[kMaxBlock], hR_[kMaxBlock];
@@ -264,9 +252,6 @@ private:
     float lastXfA_ = 1, lastXfB_ = 1, lastMaster_ = 0.8f, lastFader_[kNumDecks] = {0.8f, 0.8f};
     // Reproductor de stems
     void renderStems(int n);
-    StUnit stemFx_[kStemSlots];
-    ThreeBandEq stemEq_[kStemSlots];
-    float stemEqGain_[kStemSlots][3] = {};
     StemSet stemSet_;
     double stemPos_ = 0;
     bool stemPlaying_ = false;

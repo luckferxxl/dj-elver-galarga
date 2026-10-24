@@ -1736,9 +1736,9 @@ void App::drawStatusBar(ImVec2 a, ImVec2 b) {
         std::snprintf(midi, sizeof midi, "  ·  Mando: %s%s", name.c_str(), midi_.shiftHeld() ? " [SHIFT]" : "");
     }
     if (recorder_.active())
-        std::snprintf(r, sizeof r, "● Grabando %s%s  ·  DJ Elver Galarga 0.15.0", formatTime(recorder_.seconds(), false).c_str(), engine_.status.recDropped.load() ? " · ¡pérdidas!" : "");
+        std::snprintf(r, sizeof r, "● Grabando %s%s  ·  DJ Elver Galarga 0.11.3", formatTime(recorder_.seconds(), false).c_str(), engine_.status.recDropped.load() ? " · ¡pérdidas!" : "");
     else
-        std::snprintf(r, sizeof r, "%s · %s · %u Hz · %.1f ms · CPU %d %%%s  ·  DJ Elver Galarga 0.15.0", st.running ? st.deviceName.c_str() : "Sin audio", st.backend.c_str(),
+        std::snprintf(r, sizeof r, "%s · %s · %u Hz · %.1f ms · CPU %d %%%s  ·  DJ Elver Galarga 0.11.3", st.running ? st.deviceName.c_str() : "Sin audio", st.backend.c_str(),
                       st.sampleRate, latMs, (int)std::lround(engine_.status.cpuLoad.load() * 100), midi);
     const std::string rs = ellipsize(r, (b.x - a.x) * 0.45f, f, fs);
     const float rw = f->CalcTextSizeA(fs, FLT_MAX, 0, rs.c_str()).x;
@@ -2326,7 +2326,7 @@ void App::drawAboutDialog() {
     if (!ImGui::Begin("Acerca de DJ Elver Galarga", &showAbout_, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) { ImGui::End(); return; }
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    DrawAppLogo(dl, ImVec2(p.x, p.y + 22 * s), 44 * s, fontBold, fontHead, "0.15.0");
+    DrawAppLogo(dl, ImVec2(p.x, p.y + 22 * s), 44 * s, fontBold, fontHead, "0.11.3");
     ImGui::Dummy(ImVec2(0, 52 * s));
     ImGui::TextUnformatted("Aplicación de DJ para Windows 10/11 (64 bits).");
     ImGui::TextUnformatted("Software libre: licencia GPL versión 2 o posterior (COPYING.txt). El código fuente va con cada versión.");

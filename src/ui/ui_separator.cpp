@@ -537,42 +537,15 @@ void App::drawStemPlayer(ImVec2 a, ImVec2 b) {
         ImGui::SameLine(0, 6 * s);
         if (IconButton("##menu", Ic::Dots, ImVec2(28 * s, 24 * s), sc, false, true, 0.6f)) ImGui::OpenPopup("stemmenu");
         if (ImGui::BeginPopup("stemmenu")) {
-            ImGui::TextDisabled("%s · EQ y FX en directo", stemLabel(id));
-            auto& sf = engine_.stem.fx[k];
-            auto slider = [](const char* label, std::atomic<float>& param) {
-                float v = param.load(); if (ImGui::SliderFloat(label,&v,0.f,1.f,"%.2f")) param = v;
-            };
-            slider("Graves",engine_.stem.low[k]); slider("Medios",engine_.stem.mid[k]); slider("Agudos",engine_.stem.high[k]);
-            if (ImGui::BeginCombo("Efecto",stFxName(sf.type.load()))) {
-                for (int t=0;t<(int)StFx::Count;++t) {
-                    if (ImGui::Selectable(stFxName(t),sf.type.load()==t)) { sf.type=t; sf.div=stFxDefaultDiv(t); }
-                }
-                ImGui::EndCombo();
-            }
-            bool on=sf.on.load(); if (ImGui::Checkbox("FX encendido",&on)) sf.on=on;
-            slider("Intensidad",sf.amount); slider("Mezcla FX",sf.mix);
-            int div=sf.div.load();
-            if (ImGui::BeginCombo("Tiempo FX",stDivName(div))) {
-                for (int d=0;d<kStDivs;++d) if (stFxDivAllowed(sf.type.load(),d) && ImGui::Selectable(stDivName(d),div==d)) sf.div=d;
-                ImGui::EndCombo();
-            }
-            float bpm=engine_.stem.bpm.load();
-            if (ImGui::SliderFloat("BPM efectos",&bpm,40.f,220.f,"%.1f")) engine_.stem.bpm=bpm;
-            ImGui::TextWrapped("BPM solo para los efectos: no cambia el tempo del audio. Exportar WAV usa la mezcla seca.");
-            if (ImGui::Button("Restablecer EQ y FX")) {
-                engine_.stem.low[k]=engine_.stem.mid[k]=engine_.stem.high[k]=.5f;
-                sf.on=false;
-            }
-            ImGui::Separator();
+            ImGui::TextDisabled("%s", stemLabel(id));
             if (ImGui::MenuItem("Cargar en el plato A")) loadStemToDeck(0, id);
             if (ImGui::MenuItem("Cargar en el plato B")) loadStemToDeck(1, id);
             if (ImGui::MenuItem("Guardar como WAV…")) {
                 const std::wstring f = win::pickSaveFile(hwnd_, fromUtf8(stemOpen_.title + " (" + stemLabel(id) + ").wav"), L"Audio WAV", L"*.wav", L"wav");
                 if (!f.empty()) {
-                    bool savedSolo[kStemSlots];
-                    for (int j=0;j<stemCount_;++j) { savedSolo[j]=engine_.stem.solo[j].load(); engine_.stem.solo[j]=(j==k); }
+                    for (int j = 0; j < stemCount_; ++j) { engine_.stem.solo[j] = (j == k); }
                     exportStemMix(f, false, -1);
-                    for (int j=0;j<stemCount_;++j) engine_.stem.solo[j]=savedSolo[j];
+                    for (int j = 0; j < stemCount_; ++j) engine_.stem.solo[j] = solo && j == k;
                 }
             }
             if (ImGui::MenuItem("Mostrar el archivo")) win::revealInExplorer(stemOpenFolder_ + L"\\" + fromUtf8(id) + L".flac");

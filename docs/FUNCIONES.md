@@ -362,17 +362,3 @@ Comprobadas con `rdj_tests` (carpetas y carátulas), `--autotest` (pasos «Naveg
 | 256 | Presets del rack con los efectos nuevos (5) | ✅ |
 | 257 | Botón QUITAR FX: cuántos efectos y filtros quedan puestos, cuáles, y quitarlos de un clic (también por MIDI) | ✅ (0.11.1) |
 | 258 | Botón de efectos en cada plato: qué efecto tiene puesto (siempre a la vista), quitar solo los de ese plato, punto en las pestañas FX y VINILO (también por MIDI) | ✅ (0.11.3) |
-
-
-## Ampliación 0.13.0: LIVE
-Implementado: ocho escenas persistentes con MIDI; lanzamiento de interfaz al compás; transiciones de macro de 8/16/32 compases; Granular, Resonador y Saturación multibanda en rack/platos; EQ y FX por pista en el Separador; troceado de samples en ocho pads; correcciones de guardado y propiedad de muestras.
-Motor y utilidades comprobados con pruebas portables; interfaz comprobada sintácticamente. Compilación Windows, interacción y hardware pendientes. Véase NOVEDADES-0.13.0.md.
-
-
-## Ampliación 0.14.0: TALLER
-Sampler: pitch, reversa, recorte, ataque/salida, cuatro grupos de corte y restablecer edición. Ocho loops por canción con lanzamiento MIDI y desplazamiento limitado en extremos. Metrónomo solo de preescucha y diagnóstico de SYNC. Probabilidad por voz, variación de intensidad, generación por semilla/densidad, rotación, copia y deshacer de patrones.
-Motor verificado con pruebas portables; interfaz comprobada sintácticamente, sin ejecutar Windows. Consulta NOVEDADES-0.14.0.md para alcance y límites.
-
-
-## Ampliación 0.15.0: CAJA PRO
-24 kits / 192 sonidos propios, fuentes combinables, carga de samples de hasta 10 segundos, envolventes de volumen y tono, filtro/drive/pan/mute/solo/choke por voz, disparo MIDI y 128 bancos personales con JSON. Las pruebas de motor y decodificación han pasado; interfaz revisada sintácticamente, sin ejecución Windows. Véase NOVEDADES-0.15.0.md.

@@ -49,9 +49,6 @@ enum MidiAct : int {
     MA_FxClearAll,
     // 0.11.3: quitar los efectos de un plato (por plato; se asigna como las del rack en mandos con mapeo de Mixxx).
     MA_DeckFxClear,
-    MA_Scene1, MA_Scene2, MA_Scene3, MA_Scene4, MA_Scene5, MA_Scene6, MA_Scene7, MA_Scene8,
-    MA_SavedLoop1, MA_SavedLoop2, MA_SavedLoop3, MA_SavedLoop4, MA_SavedLoop5, MA_SavedLoop6, MA_SavedLoop7, MA_SavedLoop8,
-    MA_DrumHit1, MA_DrumHit2, MA_DrumHit3, MA_DrumHit4, MA_DrumHit5, MA_DrumHit6, MA_DrumHit7, MA_DrumHit8,
     MA_Count
 };
 inline bool isRackAction(int a) { return a >= MA_RackFxOff && a < MA_Count; }

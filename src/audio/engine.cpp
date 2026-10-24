@@ -126,7 +126,7 @@ void DeckEngine::handle(const Command& c, DeckParams& p, DeckStatus& s) {
     if (!track_) return;
     const double frames = (double)track_->frames;
     // An explicit transport command wins over a held gesture. Release must not restart playback.
-    if (c.cmd==Cmd::Pause || c.cmd==Cmd::TogglePlay || c.cmd==Cmd::Play || c.cmd==Cmd::Seek || c.cmd==Cmd::CueDown || c.cmd==Cmd::HotCue || c.cmd==Cmd::BeatJump || c.cmd==Cmd::RecallLoop) {
+    if (c.cmd==Cmd::Pause || c.cmd==Cmd::TogglePlay || c.cmd==Cmd::Play || c.cmd==Cmd::Seek || c.cmd==Cmd::CueDown || c.cmd==Cmd::HotCue || c.cmd==Cmd::BeatJump) {
         if (rolling_) { rolling_=false; loopActive_=savedLoop_; loopIn_=savedIn_; loopOut_=savedOut_; restartStretch(); }
         slipping_=false; motion_=0;
     }
@@ -203,12 +203,6 @@ void DeckEngine::handle(const Command& c, DeckParams& p, DeckStatus& s) {
     case Cmd::SetHotCueAt:
         if (c.i >= 0 && c.i < kNumHotCues) hot_[c.i] = std::clamp(snapToBeat(c.d, p), 0.0, frames);
         break;
-    case Cmd::RecallLoop:
-        if(std::isfinite(c.d) && std::isfinite(c.end) && c.d>=0 && c.end<=frames && c.end>c.d+64) {
-            loopIn_=c.d;loopOut_=c.end;loopActive_=true;
-            jumpTo(loopIn_);playing_=true;cueHeld_=false;restartStretch();
-        }
-        break;
     case Cmd::LoopIn:
         loopIn_ = snapToBeat(pos_, p); loopOut_ = -1; loopActive_ = false;
         break;
@@ -255,11 +249,8 @@ void DeckEngine::handle(const Command& c, DeckParams& p, DeckStatus& s) {
     case Cmd::BeatJump: {
         double bl = beatLenFrames(p);
         if (bl <= 0) bl = 0.5 * track_->sampleRate;
-        double delta = std::isfinite(c.d) ? bl * c.d : 0;
-        if (loopActive_) {
-            delta=std::clamp(delta,-loopIn_,frames-loopOut_);
-            loopIn_+=delta;loopOut_+=delta;
-        }
+        const double delta = bl * c.d;
+        if (loopActive_) { loopIn_ += delta; loopOut_ += delta; }
         jumpTo(pos_ + delta);
         break;
     }
@@ -496,14 +487,7 @@ void Engine::prepare(double fs) {
     for (auto& d : decks_) d.prepare(fs);
     limiter_.prepare(fs, -0.3f);
     hpLimiter_.prepare(fs, -1.0f);
-    cueClick_.prepare(fs);
     rack.prepare(fs);
-    for (int k = 0; k < kStemSlots; ++k) {
-        stemFx_[k].prepare(fs, 0xAB135u + k);
-        stemEq_[k].prepare(fs);
-        for (float& g : stemEqGain_[k]) g = 1.f;
-    }
-    retrospective.prepare((unsigned)fs);
 }
 
 double Engine::effectiveBpm(int d) const {
@@ -516,11 +500,6 @@ void Engine::process(float* out, int frames, int outChannels) {
     while (queue_.pop(c)) {
         if (c.cmd == Cmd::StemLoad) {
             stemSet_ = c.stems ? *c.stems : StemSet{};
-            stemSet_.count = std::clamp(stemSet_.count, 0, kStemSlots);
-            for (int k = 0; k < kStemSlots; ++k) {
-                stemFx_[k].reset(); stemEq_[k].reset(); stemLastGain_[k] = 0;
-                for (float& g : stemEqGain_[k]) g = 1.f;
-            }
             stemPos_ = 0; stemPlaying_ = false; stemGain_ = 0.f;
             stemStatus.loadedGen.store(c.gen, std::memory_order_release);
             continue;
@@ -529,8 +508,6 @@ void Engine::process(float* out, int frames, int outChannels) {
         if (c.cmd == Cmd::StemPause) { stemPlaying_ = false; continue; }
         if (c.cmd == Cmd::StemSeek) { stemPos_ = std::max(0.0, c.d); continue; }
         if (c.cmd == Cmd::RackLoop) { rack.command(c.i, (int)c.d); continue; }
-        if(c.cmd==Cmd::DrumSample){rack.instr.setDrumSample(c.i,c.track,c.gen);continue;}
-        if(c.cmd==Cmd::DrumHit){rack.instr.triggerDrum(c.i,float(c.d));continue;}
         if (c.cmd == Cmd::RackPad) { rack.padCommand(c.i, (int)c.d, c.track, c.gen); continue; }
         if (c.deck >= kNumDecks) continue;
         if (c.cmd == Cmd::SyncPhase) {
@@ -567,66 +544,55 @@ void Engine::process(float* out, int frames, int outChannels) {
 }
 
 void Engine::renderStems(int n) {
-    std::memset(sL_, 0, sizeof(float)*n); std::memset(sR_, 0, sizeof(float)*n);
-    if (stemSet_.count <= 0 || !stemSet_.tracks[0]) { stemStatus.playing = false; return; }
+    std::memset(sL_, 0, sizeof(float) * n); std::memset(sR_, 0, sizeof(float) * n);
+    if (stemSet_.count <= 0 || !stemSet_.tracks[0]) { stemStatus.playing.store(false); return; }
     const Track* t0 = stemSet_.tracks[0];
+    const double ratio = (double)t0->sampleRate / fs_;
+    const double frames = (double)t0->frames;
     bool anySolo = false;
-    for (int k=0;k<stemSet_.count;++k) anySolo |= stem.solo[k].load();
-    float envelope[kMaxBlock];
-    double positions[kMaxBlock];
-    const double rawBpm=stem.bpm.load();
-    const double bpm = std::isfinite(rawBpm) ? std::clamp(rawBpm,40.,300.) : 120.;
-    const double beat0 = stemPos_ / t0->sampleRate * bpm / 60.;
-    const float vol = faderToGain(std::clamp(stem.volume.load(), 0.f, 1.f));
-    const float step = float(1. / (.004*fs_));
-    for (int i=0;i<n;++i) {
-        stemGain_ = stemPlaying_ ? std::min(1.f,stemGain_+step) : std::max(0.f,stemGain_-step);
-        envelope[i] = stemGain_*vol;
-        positions[i] = stemPos_ / t0->sampleRate;
+    for (int k = 0; k < stemSet_.count; ++k) if (stem.solo[k].load(std::memory_order_relaxed)) anySolo = true;
+    const float step = (float)(1.0 / (0.004 * fs_));
+    const float vol = faderToGain(std::clamp(stem.volume.load(std::memory_order_relaxed), 0.f, 1.f));
+    float target[kStemSlots];
+    for (int k = 0; k < stemSet_.count; ++k) {
+        const bool audible = !stem.mute[k].load(std::memory_order_relaxed) && (!anySolo || stem.solo[k].load(std::memory_order_relaxed));
+        target[k] = audible ? std::clamp(stem.gain[k].load(std::memory_order_relaxed), 0.f, 1.5f) : 0.f;
+    }
+    float peaks[kStemSlots] = {};
+    const float inv = 1.f / n;
+    for (int i = 0; i < n; ++i) {
+        if (stemPlaying_) stemGain_ = std::min(1.f, stemGain_ + step);
+        else stemGain_ = std::max(0.f, stemGain_ - step);
+        if (stemGain_ <= 0.f) continue;
+        const int64_t idx = (int64_t)stemPos_;
+        const float fr = (float)(stemPos_ - (double)idx);
+        float l = 0, r = 0;
+        for (int k = 0; k < stemSet_.count; ++k) {
+            const Track* t = stemSet_.tracks[k];
+            if (!t || idx + 1 >= (int64_t)t->frames) continue;
+            const float* p = t->pcm.data() + idx * 2;
+            const float g = stemLastGain_[k] + (target[k] - stemLastGain_[k]) * (i + 1) * inv;
+            const float sl = p[0] + (p[2] - p[0]) * fr, sr = p[1] + (p[3] - p[1]) * fr;
+            l += sl * g; r += sr * g;
+            peaks[k] = std::max(peaks[k], std::max(std::fabs(sl * g), std::fabs(sr * g)));
+        }
+        sL_[i] = l * stemGain_ * vol; sR_[i] = r * stemGain_ * vol;
         if (stemPlaying_) {
-            stemPos_ = std::min(double(t0->frames),stemPos_ + t0->sampleRate/fs_);
-            if (stemPos_ >= t0->frames) stemPlaying_ = false;
+            stemPos_ += ratio;
+            if (stemPos_ >= frames) { stemPos_ = frames; stemPlaying_ = false; }
         }
     }
-    for (int k=0;k<stemSet_.count;++k) {
-        const Track* t = stemSet_.tracks[k];
-        float L[kMaxBlock] = {}, R[kMaxBlock] = {};
-        const bool audible = !stem.mute[k].load() && (!anySolo || stem.solo[k].load());
-        const float target = audible ? std::clamp(stem.gain[k].load(),0.f,1.5f) : 0.f;
-        for (int i=0;i<n;++i) {
-            if (!t || envelope[i]<=0) continue;
-            const double pos = positions[i] * t->sampleRate;
-            const uint64_t idx = uint64_t(pos);
-            if (idx+1 >= t->frames) continue;
-            const float fr = float(pos-idx);
-            L[i] = (t->pcm[idx*2] + (t->pcm[idx*2+2]-t->pcm[idx*2])*fr)*envelope[i];
-            R[i] = (t->pcm[idx*2+1] + (t->pcm[idx*2+3]-t->pcm[idx*2+1])*fr)*envelope[i];
-        }
-        const float eq[3] = {eqKnobToGain(stem.low[k].load()),eqKnobToGain(stem.mid[k].load()),eqKnobToGain(stem.high[k].load())};
-        stemEq_[k].process(L,R,n,stemEqGain_[k][0],eq[0],stemEqGain_[k][1],eq[1],stemEqGain_[k][2],eq[2]);
-        std::copy(eq,eq+3,stemEqGain_[k]);
-        const auto& f = stem.fx[k];
-        const bool cut = rack.params.fxCut.load();
-        stemFx_[k].processInsert(L,R,n,std::clamp(f.type.load(),0,(int)StFx::Count-1),f.on.load() && !cut,
-            std::isfinite(f.amount.load()) ? std::clamp(f.amount.load(),0.f,1.f) : .5f,
-            std::isfinite(f.mix.load()) ? std::clamp(f.mix.load(),0.f,1.f) : .5f,kStDivBeats[std::clamp(f.div.load(),0,kStDivs-1)],bpm,
-            beat0,stemPos_/t0->sampleRate*bpm/60.);
-        float peak = 0;
-        for (int i=0;i<n;++i) {
-            const float g = stemLastGain_[k] + (target-stemLastGain_[k])*(i+1)/n;
-            sL_[i] += L[i]*g; sR_[i] += R[i]*g;
-            peak = std::max(peak,std::max(std::fabs(L[i]*g),std::fabs(R[i]*g)));
-        }
-        stemLastGain_[k] = target;
-        stemStatus.peak[k].store(std::max(peak,stemStatus.peak[k].load()));
+    for (int k = 0; k < stemSet_.count; ++k) {
+        stemLastGain_[k] = target[k];
+        stemStatus.peak[k].store(std::max(peaks[k], stemStatus.peak[k].load(std::memory_order_relaxed)), std::memory_order_relaxed);
     }
-    const bool pfl = stem.pfl.load();
-    for (int i=0;i<n;++i) {
+    const bool pfl = stem.pfl.load(std::memory_order_relaxed);
+    for (int i = 0; i < n; ++i) {
         mL_[i] += sL_[i]; mR_[i] += sR_[i];
         if (pfl) { cL_[i] += sL_[i]; cR_[i] += sR_[i]; }
     }
-    stemStatus.posFrames = stemPos_;
-    stemStatus.playing = stemPlaying_;
+    stemStatus.posFrames.store(stemPos_, std::memory_order_relaxed);
+    stemStatus.playing.store(stemPlaying_, std::memory_order_relaxed);
 }
 
 // Posición alineada más cercana; si queda antes del inicio de la pista, se avanza una unidad.
@@ -789,8 +755,6 @@ void Engine::processBlock(float* out, int n, int outChannels) {
     if (lg < status.limiterGain.load(std::memory_order_relaxed)) status.limiterGain.store(lg, std::memory_order_relaxed);
     if (lg < 0.891f) status.limiterHits.fetch_add(1, std::memory_order_relaxed);
 
-    retrospective.push(mL_, mR_, n);
-
     MeterState ms;
     measure(mL_, mR_, n, ms);
     status.masterPeakL.store(std::max(ms.peakL, status.masterPeakL.load(std::memory_order_relaxed)), std::memory_order_relaxed);
@@ -803,9 +767,6 @@ void Engine::processBlock(float* out, int n, int outChannels) {
         if (!recRing.write(inter_, (size_t)n * 2)) status.recDropped.fetch_add((uint64_t)n * 2, std::memory_order_relaxed);
     }
 
-    const int clickDeck=std::clamp(mixer.cueClickDeck.load(),0,kNumDecks-1);
-    cueClick_.add(cL_,cR_,n,rc.beat0[clickDeck],rc.beat1[clickDeck],
-        mixer.cueClick.load() && rc.grid[clickDeck] && rc.playing[clickDeck],mixer.cueClickVol.load());
     const HpRouting routing = (HpRouting)mixer.hpRouting.load(std::memory_order_relaxed);
     if (routing != HpRouting::Ninguna) {
         const float mix = std::clamp(mixer.hpMix.load(std::memory_order_relaxed), 0.f, 1.f);

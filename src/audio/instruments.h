@@ -6,8 +6,6 @@
 #pragma once
 #include "dsp.h"
 #include "track.h"
-#include "pad_tools.h"
-#include "drum_pro.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -52,10 +50,7 @@ struct InstrParams {
     std::atomic<float> drumVol{0.8f};
     std::atomic<uint8_t> drum[kDrumPatterns][kDrumTracks][kMaxSteps];   // 0 nada, 1 golpe, 2 acento
     std::atomic<float> dLevel[kDrumTracks], dTune[kDrumTracks], dDecay[kDrumTracks];   // 0..1 (0,5 = normal)
-    std::atomic<bool> dMute[kDrumTracks],dSolo[kDrumTracks];
-    std::atomic<float> dAttackMs[kDrumTracks],dHoldMs[kDrumTracks],dDecayMs[kDrumTracks];
-    std::atomic<float> dPitchEnv[kDrumTracks],dPitchEnvMs[kDrumTracks],dCutHz[kDrumTracks],dDrive[kDrumTracks],dPan[kDrumTracks];
-    std::atomic<int> dChoke[kDrumTracks];
+    std::atomic<bool> dMute[kDrumTracks];
     // Bajo
     std::atomic<bool> bassPlay{false};
     std::atomic<int> bassPattern{0};
@@ -67,11 +62,6 @@ struct InstrParams {
     // Sampler
     std::atomic<int> padMode[kPads];
     std::atomic<float> padVol[kPads];
-    std::atomic<float> padPitch[kPads], padStart[kPads], padEnd[kPads], padAttack[kPads], padRelease[kPads];
-    std::atomic<bool> padReverse[kPads];
-    std::atomic<int> padChoke[kPads];
-    std::atomic<float> dProbability[kDrumTracks];
-    std::atomic<float> humanizeVelocity{0.f};
     std::atomic<bool> padQuant{true};        // los loops entran en el siguiente pulso
     std::atomic<float> samplerVol{0.8f};
     // Bus de instrumentos
@@ -90,7 +80,7 @@ struct InstrStatus {
     std::atomic<bool> padWaiting[kPads];     // loop esperando el pulso
     std::atomic<float> padPos[kPads];
     std::atomic<uint32_t> padGen[kPads];     // muestra que usa el audio (acuse de recibo)
-    std::atomic<uint32_t> drumHits[kDrumTracks],drumSampleGen[kDrumTracks];
+    std::atomic<uint32_t> drumHits[kDrumTracks];
     std::atomic<float> peak{0.f};
     InstrStatus();
 };
@@ -100,7 +90,6 @@ class DrumVoices {
 public:
     bool any() const { for (auto& v : v_) if (v.on) return true; return false; }
     void prepare(double fs);
-    void stop(int v){if(v>=0&&v<kDrumTracks)v_[v].on=false;}
     void trigger(int v, float vel, float tune, float decay);
     void render(float* L, float* R, int n, const float* level, const bool* mute);
 private:
@@ -145,9 +134,6 @@ public:
     void padRelease(int pad);
     void padStopAll();
     void padSet(int pad, const Track* t, uint32_t gen);
-    void setDrumSample(int voice,const Track* t,uint32_t gen);
-    void triggerDrum(int voice,float velocity);
-    DrumControl drumControl(int voice) const;
     // Genera el bus de instrumentos (ya con sus volúmenes) a partir del reloj.
     void render(float* L, float* R, int n, const RackCtx& ctx);
     // Reloj del último bloque (para cuantizar la loop station y sincronizar efectos con la fuente «instrumentos»).
@@ -156,9 +142,6 @@ public:
     InstrParams params;
     InstrStatus status;
 private:
-    void startPad(int k);
-    uint32_t performanceRng_=0x1834ADu;
-    float randomUnit() { performanceRng_^=performanceRng_<<13;performanceRng_^=performanceRng_>>17;performanceRng_^=performanceRng_<<5;return float(performanceRng_>>8)/16777216.f; }
     void clock(int n, const RackCtx& ctx, double* beat);
     void drumStepAt(long long k);
     void bassStepAt(long long k);
@@ -168,7 +151,6 @@ private:
     double blockB0_ = 0, blockB1_ = 0;
     double beatArr_[256];
     // Caja de ritmos
-    SampleDrums sampleDrums_;
     DrumVoices drums_;
     bool drumRun_ = false, drumArm_ = false;
     int drumPat_ = 0, lastDrumEvent_ = -1;

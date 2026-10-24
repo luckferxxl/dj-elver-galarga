@@ -26,16 +26,14 @@ InstrParams::InstrParams() {
         drumSteps[p] = 16;
         for (int t = 0; t < kDrumTracks; ++t) for (int s = 0; s < kMaxSteps; ++s) drum[p][t][s] = 0;
     }
-    for (int t = 0; t < kDrumTracks; ++t) { dLevel[t] = 0.8f; dTune[t] = 0.5f; dDecay[t] = 0.5f; dMute[t] = false; dProbability[t] = 1.f;dSolo[t]=false;
-        dAttackMs[t]=.5f;dHoldMs[t]=0;dDecayMs[t]=t==3?90.f:t==7?2000.f:600.f;
-        dPitchEnv[t]=0;dPitchEnvMs[t]=50;dCutHz[t]=18000;dDrive[t]=0;dPan[t]=0;dChoke[t]=(t==3||t==4)?1:0; }
+    for (int t = 0; t < kDrumTracks; ++t) { dLevel[t] = 0.8f; dTune[t] = 0.5f; dDecay[t] = 0.5f; dMute[t] = false; }
     for (int p = 0; p < kBassPatterns; ++p) for (int s = 0; s < kBassSteps; ++s) bass[p][s] = 0;
-    for (int i = 0; i < kPads; ++i) { padMode[i] = PM_Disparo; padVol[i] = 0.8f; padPitch[i]=0;padReverse[i]=false;padStart[i]=0;padEnd[i]=1;padAttack[i]=2;padRelease[i]=10;padChoke[i]=0; }
+    for (int i = 0; i < kPads; ++i) { padMode[i] = PM_Disparo; padVol[i] = 0.8f; }
 }
 
 InstrStatus::InstrStatus() {
     for (int i = 0; i < kPads; ++i) { padPlaying[i] = false; padWaiting[i] = false; padPos[i] = 0.f; padGen[i] = 0; }
-    for (int t = 0; t < kDrumTracks; ++t) {drumHits[t] = 0;drumSampleGen[t]=0;}
+    for (int t = 0; t < kDrumTracks; ++t) drumHits[t] = 0;
 }
 
 // =================================================================== caja de ritmos
@@ -239,29 +237,10 @@ void BassVoice::render(float* out, int n, const InstrParams& p) {
 void Instruments::prepare(double fs) {
     fs_ = fs;
     drums_.prepare(fs);
-    sampleDrums_.prepare(fs);
     bassV_.prepare(fs);
     drumRun_ = bassRun_ = drumArm_ = bassArm_ = false;
     for (auto& p : pads_) { p.playing = p.waiting = p.held = p.fading = false; p.pos = 0; p.gain = 0; }
     lastQ_ = -1e9;
-}
-
-DrumControl Instruments::drumControl(int v)const {
-    DrumControl c;c.attackMs=params.dAttackMs[v].load();c.holdMs=params.dHoldMs[v].load();
-    c.decayMs=params.dDecayMs[v].load()*(.5f+safeParam(params.dDecay[v].load(),0,1,.5f));
-    c.pitchSemis=(safeParam(params.dTune[v].load(),0,1,.5f)-.5f)*24;
-    c.pitchDepth=params.dPitchEnv[v].load();c.pitchDecayMs=params.dPitchEnvMs[v].load();c.cutoff=params.dCutHz[v].load();
-    c.drive=params.dDrive[v].load();c.pan=params.dPan[v].load();c.choke=params.dChoke[v].load();return c;
-}
-void Instruments::setDrumSample(int v,const Track* t,uint32_t gen) {
-    if(v<0||v>=kDrumTracks)return;
-    sampleDrums_.set(v,t);drums_.stop(v);status.drumSampleGen[v].store(gen,std::memory_order_release);
-}
-void Instruments::triggerDrum(int v,float velocity) {
-    if(v<0||v>=kDrumTracks)return;
-    if(sampleDrums_.has(v))sampleDrums_.trigger(v,velocity,drumControl(v));
-    else drums_.trigger(v,safeParam(velocity,0,1,1),params.dTune[v].load(),params.dDecay[v].load());
-    status.drumHits[v].fetch_add(1,std::memory_order_relaxed);
 }
 
 void Instruments::padSet(int pad, const Track* t, uint32_t gen) {
@@ -269,19 +248,8 @@ void Instruments::padSet(int pad, const Track* t, uint32_t gen) {
     Pad& p = pads_[pad];
     p.playing = p.waiting = p.held = p.fading = false;
     p.pos = 0; p.gain = 0;
-    p.s = t && t->frames >= 2 && t->frames <= t->pcm.size()/2 && t->sampleRate>0 ? PadSample{t->pcm.data(), (int64_t)t->frames, (double)t->sampleRate} : PadSample{};
+    p.s = t && t->frames > 0 ? PadSample{t->pcm.data(), (int64_t)t->frames, (double)t->sampleRate} : PadSample{};
     status.padGen[pad].store(gen, std::memory_order_release);
-}
-
-void Instruments::startPad(int k) {
-    Pad& pd=pads_[k];
-    const int group=std::clamp(params.padChoke[k].load(),0,4);
-    if(group) for(int j=0;j<kPads;++j) if(j!=k && params.padChoke[j].load()==group) {
-        pads_[j].waiting=false; if(pads_[j].playing)pads_[j].fading=true;
-    }
-    const auto region=padRegion(pd.s.frames,params.padStart[k].load(),params.padEnd[k].load());
-    pd.pos=region.first(params.padReverse[k].load());
-    pd.playing=region.valid();pd.waiting=false;pd.fading=false;pd.gain=0;
 }
 
 void Instruments::padPress(int pad) {
@@ -292,13 +260,9 @@ void Instruments::padPress(int pad) {
     p.held = true;
     if (mode == PM_Loop) {
         if (p.playing || p.waiting) { p.waiting = false; p.fading = true; return; }   // segundo toque: para
-        if (params.padQuant.load(std::memory_order_relaxed)) {
-            const int group=params.padChoke[pad].load();
-            if(group>0)for(int j=0;j<kPads;++j)if(j!=pad && params.padChoke[j].load()==group)pads_[j].waiting=false;
-            p.waiting = true; return;
-        }
+        if (params.padQuant.load(std::memory_order_relaxed)) { p.waiting = true; return; }
     }
-    startPad(pad);
+    p.pos = 0; p.playing = true; p.fading = false; p.waiting = false; p.gain = 0;
 }
 
 void Instruments::padRelease(int pad) {
@@ -356,11 +320,8 @@ void Instruments::drumStepAt(long long k) {
     for (int t = 0; t < kDrumTracks; ++t) {
         const int v = p.drum[drumPat_][t][pos].load(std::memory_order_relaxed);
         if (!v) continue;
-        const float probability=fin01(p.dProbability[t].load(),1.f);
-        if(probability<=0 || (probability<1 && randomUnit()>=probability))continue;
-        const float human=safeParam(p.humanizeVelocity.load(),0,.5f,0);
-        const float velocity=std::clamp((v==2?1.f:.72f)*(1.f+(human>0?(randomUnit()*2-1)*human:0)),0.f,1.f);
-        triggerDrum(t,velocity);
+        drums_.trigger(t, v == 2 ? 1.f : 0.72f, p.dTune[t].load(std::memory_order_relaxed), p.dDecay[t].load(std::memory_order_relaxed));
+        status.drumHits[t].fetch_add(1, std::memory_order_relaxed);
     }
     status.drumStep.store((int)pos, std::memory_order_relaxed);
     status.drumPatternNow.store(drumPat_, std::memory_order_relaxed);
@@ -403,7 +364,7 @@ void Instruments::render(float* L, float* R, int n, const RackCtx& ctx) {
     {
         // Sin nada que sonar (ni pedido): solo avanza el reloj. Así el bus no gasta nada si no se usa.
         bool busy = params.drumPlay.load(std::memory_order_relaxed) || params.bassPlay.load(std::memory_order_relaxed) || drumRun_ || bassRun_ ||
-                    drums_.any() || sampleDrums_.any() || bassV_.active();
+                    drums_.any() || bassV_.active();
         for (const Pad& pd : pads_) busy = busy || pd.playing || pd.waiting;
         if (!busy) {
             const double prevBeat = beat_;
@@ -438,8 +399,7 @@ void Instruments::render(float* L, float* R, int n, const RackCtx& ctx) {
     if (!p.bassPlay.load(std::memory_order_relaxed) && bassRun_) { bassV_.noteOff(); bassRun_ = bassArm_ = false; bassGateBeat_ = -1; }
     float level[kDrumTracks];
     bool mute[kDrumTracks];
-    bool anySolo=false;for(int t=0;t<kDrumTracks;++t)anySolo=anySolo||p.dSolo[t].load();
-    for (int t = 0; t < kDrumTracks; ++t) { level[t] = fin01(p.dLevel[t].load(std::memory_order_relaxed), 0.8f); mute[t] = p.dMute[t].load(std::memory_order_relaxed)||(anySolo&&!p.dSolo[t].load()); }
+    for (int t = 0; t < kDrumTracks; ++t) { level[t] = fin01(p.dLevel[t].load(std::memory_order_relaxed), 0.8f); mute[t] = p.dMute[t].load(std::memory_order_relaxed); }
     int seg = 0;
     for (int i = 0; i < n; ++i) {
         const double q = beatArr_[i] * 4.0;
@@ -451,51 +411,48 @@ void Instruments::render(float* L, float* R, int n, const RackCtx& ctx) {
         for (long long k = k1 - 1; k <= k1; ++k) {
             const double at = (double)k + ((k & 1) ? sd : 0.0);
             if (!(at > q0 && at <= q)) continue;
-            if (i > seg) { drums_.render(tmpL_ + seg, tmpR_ + seg, i - seg, level, mute); sampleDrums_.render(tmpL_+seg,tmpR_+seg,i-seg,level,mute); bassV_.render(bass_ + seg, i - seg, p); seg = i; }
+            if (i > seg) { drums_.render(tmpL_ + seg, tmpR_ + seg, i - seg, level, mute); bassV_.render(bass_ + seg, i - seg, p); seg = i; }
             if (anyDrum) drumStepAt(k);
             if (anyBass) bassStepAt(k);
         }
         // Fin de la nota del bajo (a mitad de paso, sin swing).
         if (bassGateBeat_ >= 0 && q0 < bassGateBeat_ && q >= bassGateBeat_) {
-            if (i > seg) { drums_.render(tmpL_ + seg, tmpR_ + seg, i - seg, level, mute); sampleDrums_.render(tmpL_+seg,tmpR_+seg,i-seg,level,mute); bassV_.render(bass_ + seg, i - seg, p); seg = i; }
+            if (i > seg) { drums_.render(tmpL_ + seg, tmpR_ + seg, i - seg, level, mute); bassV_.render(bass_ + seg, i - seg, p); seg = i; }
             bassV_.noteOff();
             bassGateBeat_ = -1;
         }
         // Loops de los pads que esperan el pulso.
         if (std::floor(q0 / 4.0) != std::floor(q / 4.0))
-            for (int k=0;k<kPads;++k) if (pads_[k].waiting) startPad(k);
+            for (auto& pd : pads_) if (pd.waiting) { pd.waiting = false; pd.playing = true; pd.fading = false; pd.pos = 0; pd.gain = 0; }
     }
-    if (n > seg) { drums_.render(tmpL_ + seg, tmpR_ + seg, n - seg, level, mute); sampleDrums_.render(tmpL_+seg,tmpR_+seg,n-seg,level,mute); bassV_.render(bass_ + seg, n - seg, p); }
+    if (n > seg) { drums_.render(tmpL_ + seg, tmpR_ + seg, n - seg, level, mute); bassV_.render(bass_ + seg, n - seg, p); }
     // Sampler
     float sL[256] = {}, sR[256] = {};
+    const float up = (float)(1.0 / (0.002 * fs_)), down = (float)(1.0 / (0.010 * fs_));
     for (int k = 0; k < kPads; ++k) {
-        Pad& pd=pads_[k];
-        status.padWaiting[k].store(pd.waiting,std::memory_order_relaxed);
-        if(!pd.playing || !pd.s.pcm){status.padPlaying[k]=false;continue;}
-        const auto region=padRegion(pd.s.frames,p.padStart[k].load(),p.padEnd[k].load());
-        if(!region.valid()){pd.playing=false;status.padPlaying[k]=false;continue;}
-        const float vol=fin01(p.padVol[k].load(),.8f);
-        const bool loop=p.padMode[k].load()==PM_Loop, reverse=p.padReverse[k].load();
-        const double rate=pd.s.rate/fs_*std::pow(2.,safeParam(p.padPitch[k].load(),-24,24,0)/12.)*(reverse?-1:1);
-        const float up=float(1./(safeParam(p.padAttack[k].load(),.2f,250.f,2)*.001*fs_));
-        const float down=float(1./(safeParam(p.padRelease[k].load(),1.f,1000.f,10)*.001*fs_));
-        const double edge=std::max(1.,std::min(.002*pd.s.rate,(region.end-region.begin)/4));
-        for(int i=0;i<n;++i) {
-            if(pd.pos<region.begin || pd.pos>=region.end) {
-                if(loop)pd.pos=region.wrap(pd.pos);else{pd.playing=false;break;}
+        Pad& pd = pads_[k];
+        status.padWaiting[k].store(pd.waiting, std::memory_order_relaxed);
+        if (!pd.playing || !pd.s.pcm) { status.padPlaying[k].store(false, std::memory_order_relaxed); continue; }
+        const float vol = fin01(p.padVol[k].load(std::memory_order_relaxed), 0.8f);
+        const bool loop = p.padMode[k].load(std::memory_order_relaxed) == PM_Loop;
+        const double rate = pd.s.rate / fs_;
+        for (int i = 0; i < n; ++i) {
+            if (pd.fading) { pd.gain -= down; if (pd.gain <= 0) { pd.gain = 0; pd.playing = false; pd.fading = false; break; } }
+            else pd.gain = std::min(1.f, pd.gain + up);
+            const int64_t j = (int64_t)pd.pos;
+            if (j + 1 >= pd.s.frames) {
+                if (loop) { pd.pos = 0; continue; }
+                pd.playing = false; break;
             }
-            if(pd.fading){pd.gain=std::max(0.f,pd.gain-down);if(pd.gain<=0){pd.playing=false;pd.fading=false;break;}}
-            else pd.gain=std::min(1.f,pd.gain+up);
-            const int64_t j=int64_t(pd.pos),next=std::min(j+1,int64_t(region.end)-1);
-            const float fr=float(pd.pos-j);
-            const float seam=float(std::clamp(std::min(pd.pos-region.begin,region.end-1-pd.pos)/edge,0.,1.));
-            const float g=pd.gain*vol*vol*seam;
-            sL[i]+=(pd.s.pcm[j*2]+(pd.s.pcm[next*2]-pd.s.pcm[j*2])*fr)*g;
-            sR[i]+=(pd.s.pcm[j*2+1]+(pd.s.pcm[next*2+1]-pd.s.pcm[j*2+1])*fr)*g;
-            pd.pos+=rate;
+            const float fr = (float)(pd.pos - (double)j);
+            const float* a = pd.s.pcm + j * 2;
+            const float g = pd.gain * vol * vol;
+            sL[i] += (a[0] + (a[2] - a[0]) * fr) * g;
+            sR[i] += (a[1] + (a[3] - a[1]) * fr) * g;
+            pd.pos += rate;
         }
-        status.padPlaying[k].store(pd.playing,std::memory_order_relaxed);
-        status.padPos[k].store(float(std::clamp(pd.pos/pd.s.frames,0.,1.)),std::memory_order_relaxed);
+        status.padPlaying[k].store(pd.playing, std::memory_order_relaxed);
+        status.padPos[k].store(pd.s.frames > 0 ? (float)(pd.pos / (double)pd.s.frames) : 0.f, std::memory_order_relaxed);
     }
     // Mezcla del bus con rampas de volumen.
     const float vd = fin01(p.drumVol.load(std::memory_order_relaxed), 0.8f), vb = fin01(p.bassVol.load(std::memory_order_relaxed), 0.7f);
