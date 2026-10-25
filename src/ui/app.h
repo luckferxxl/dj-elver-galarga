@@ -38,6 +38,12 @@ struct DeckUi {
     TrackMeta meta;          // cuadrícula y cues (se guardan en la biblioteca)
     bool sync = false;
     float pitch = 0.f;       // fracción
+    bool hasPendingPitchPrompt = false;
+    float prevPitchVal = 0.f;
+    float matchedPitchVal = 0.f;
+    bool hasMatchedPitch = false;
+    double mixInSec = -1.0;
+    double mixOutSec = -1.0;
     std::string error;
     double errorTime = 0;
     std::vector<double> taps;
@@ -158,6 +164,9 @@ private:
     void drawPerformance(int d);
     void drawRecordingDialog();
     void drawLibraryTools();
+    void drawElverKeyPanel(ImVec2 a, ImVec2 b);
+    void drawElverKeyWindow();
+    void drawElverKeyContent();
     std::wstring recordingFolder() const;
     void recordingTick();
     void drawWaveRows(ImVec2 a, ImVec2 b);
@@ -362,7 +371,15 @@ private:
     DeckUi deck_[kNumDecks];
 
     // Estado de interfaz
-    bool showRecording_ = false, showLibraryTools_ = false;
+    bool showRecording_ = false, showLibraryTools_ = false, showElverKey_ = false;
+    bool mixLabRehearsal_ = false;
+    bool mixLabRehearsalBStarted_ = false;
+    double mixLabRehearsalStart_ = 0.0;
+    double mixLabRehearsalExitA_ = 0.0;
+    double mixLabRehearsalEntryB_ = 0.0;
+    double mixLabRehearsalFadeSec_ = 8.0;
+    double pendingSeekSec_[kNumDecks] = {-1.0, -1.0};
+    bool pendingPlayOnLoad_[kNumDecks] = {false, false};
     std::string recLastPath_[2];
     bool recLastPlaying_[2] = {};
     std::vector<std::string> recLog_;

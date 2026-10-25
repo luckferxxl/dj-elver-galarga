@@ -662,9 +662,26 @@ bool MandoPuente::writeReal(const std::string& g, const std::string& k, double v
         }
         if (k == "rate") {
             const float rr = a.pitchRange(d);
+            double vAdj = a.settings_.pitchInvertUi ? v : -v;
+            if (a.midi_.settings().pitchInvert) vAdj = -vAdj;
+            const float target01 = (float)std::clamp((vAdj + 1.0) * 0.5, 0.0, 1.0);
+            const float cur01 = std::clamp((dk.pitch / std::max(rr, 0.01f) + 1.f) * 0.5f, 0.f, 1.f);
+            auto& pk = a.pickup_[MA_Pitch * 2 + (d & 1)];
+            if (a.midi_.settings().softTakeover) {
+                if (pk.engaged && std::fabs(cur01 - pk.lastApplied) > 0.025f) pk.engaged = false;
+                if (!pk.engaged) {
+                    const bool isClose = std::fabs(target01 - cur01) < 0.045f;
+                    const bool crossed = pk.hasPrev && (pk.prev - cur01) * (target01 - cur01) <= 0.f;
+                    if (isClose || crossed) pk.engaged = true;
+                }
+                pk.prev = target01; pk.hasPrev = true;
+                if (!pk.engaged) { a.midiPickupHint_ = a.now_; return true; }
+            }
+            pk.engaged = true; pk.lastApplied = target01;
             if (p.syncTo.load() >= 0) dk.sync = false;
-            dk.pitch = (float)std::clamp(v, -1.0, 1.0) * rr;
+            dk.pitch = (float)std::clamp(vAdj, -1.0, 1.0) * rr;
             p.pitch = dk.pitch;
+            dk.hasPendingPitchPrompt = false;
             return true;
         }
         if (k == "rateRange") { if (v > 0) a.settings_.pitchRange[d] = (float)std::clamp(v * 100.0, 2.0, 100.0); return true; }

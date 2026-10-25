@@ -227,17 +227,100 @@ void App::pollLoader() {
         dk.title = r.track->title;
         dk.artist = r.track->artist;
         if (auto it = stemTitles_.find(dk.path); it != stemTitles_.end()) { dk.title = it->second; dk.artist = "Separador"; }
+        const bool wasSync = dk.sync;
+        const float oldPitch = dk.pitch;
+        const int other = 1 - r.deck;
+        const bool otherHasBpm = deck_[other].track && deck_[other].meta.bpm > 0;
+        const bool otherPlaying = engine_.deckStatus[other].playing.load();
         dk.meta = r.track->meta;
         dk.error.clear();
         dk.endHandled = false;
-        dk.sync = false;
         dk.playedSec = 0;
         dk.historyLogged = false;
+        dk.hasPendingPitchPrompt = false;
+        dk.hasMatchedPitch = false;
+        // Desenganchar soft-takeover del fader físico para que no pegue salto brusco
+        pickup_[MA_Pitch * 2 + r.deck].engaged = false;
         pushGrid(r.deck);
         engine_.send(c);
-        if (dk.restorePos >= 0 && dk.restorePath == dk.path) {
+
+        // Calcular el pitch que iguala esta pista nueva con el otro plato si ambos tienen BPM
+        float matchedPitch = 0.f;
+        if (otherHasBpm && dk.meta.bpm > 0) {
+            const double kFactor = syncFactorFor(r.deck, other);
+            const double otherEff = deck_[other].meta.bpm * (1.0 + engine_.deck[other].pitch.load());
+            matchedPitch = (float)(otherEff / (dk.meta.bpm * kFactor) - 1.0);
+            dk.matchedPitchVal = matchedPitch;
+            dk.hasMatchedPitch = (std::fabs(matchedPitch) <= 0.50f);
+        }
+
+        if (wasSync && dk.hasMatchedPitch) {
+            // Si estaba en SYNC, mantener siempre los dos platos sincronizados al mismo BPM sin saltar a otra velocidad
+            dk.sync = true;
+            if (std::fabs(matchedPitch) > settings_.pitchRange[r.deck] / 100.f) {
+                for (float rng : {8.f, 16.f, 50.f}) if (std::fabs(matchedPitch) <= rng / 100.f) { settings_.pitchRange[r.deck] = rng; break; }
+            }
+            dk.pitch = matchedPitch;
+            engine_.deck[r.deck].pitch = dk.pitch;
+            engine_.deck[r.deck].syncFactor = syncFactorFor(r.deck, other);
+            engine_.deck[r.deck].syncTo = other;
+        } else {
+            dk.sync = false;
+            engine_.deck[r.deck].syncTo = -1;
+            if (std::fabs(oldPitch) > 0.001f) {
+                dk.prevPitchVal = oldPitch;
+                if (settings_.pitchOnLoadMode == 2) {
+                    // Modo 2: conservar el pitch anterior tal cual
+                    dk.pitch = oldPitch;
+                    engine_.deck[r.deck].pitch = dk.pitch;
+                } else if (settings_.pitchOnLoadMode == 0 && dk.hasMatchedPitch && (otherPlaying || std::fabs(oldPitch) > 0.001f)) {
+                    // Modo 0 (por defecto): mantener los dos platos igualados de velocidad y avisar por si se quiere cambiar
+                    if (std::fabs(matchedPitch) <= settings_.pitchRange[r.deck] / 100.f) {
+                        dk.pitch = matchedPitch;
+                    } else {
+                        dk.pitch = 0.f;
+                    }
+                    engine_.deck[r.deck].pitch = dk.pitch;
+                    dk.hasPendingPitchPrompt = true;
+                } else {
+                    // Poner a 0% sin pegar salto a la velocidad vieja y avisar con botones en el plato
+                    dk.pitch = 0.f;
+                    engine_.deck[r.deck].pitch = 0.f;
+                    dk.hasPendingPitchPrompt = true;
+                }
+            }
+        }
+        // Calcular puntos recomendados MIX IN y MIX OUT a partir de los Hot Cues o la estructura de compases
+        {
+            const double dur = r.track->lengthSec();
+            const double bpm = dk.meta.bpm > 30.0 ? dk.meta.bpm : 126.0;
+            const double bar = 4.0 * 60.0 / bpm;
+            const double g0 = std::max(0.0, dk.meta.gridAnchorSec);
+            dk.mixInSec = g0;
+            for (int ci = 0; ci < kNumHotCues; ++ci) {
+                if (dk.meta.hotCuesSec[ci] >= 0.0 && dk.meta.hotCuesSec[ci] <= std::min(45.0, dur * 0.25)) {
+                    dk.mixInSec = dk.meta.hotCuesSec[ci];
+                    break;
+                }
+            }
+            dk.mixOutSec = std::max(g0, dur - 16.0 * bar);
+            for (int ci = kNumHotCues - 1; ci >= 0; --ci) {
+                if (dk.meta.hotCuesSec[ci] >= dur * 0.55 && dk.meta.hotCuesSec[ci] <= dur - 4.0) {
+                    dk.mixOutSec = dk.meta.hotCuesSec[ci];
+                    break;
+                }
+            }
+        }
+        if (pendingSeekSec_[r.deck] >= 0.0) {
+            send(r.deck, Cmd::Seek, pendingSeekSec_[r.deck] * r.track->sampleRate);
+            pendingSeekSec_[r.deck] = -1.0;
+        } else if (dk.restorePos >= 0 && dk.restorePath == dk.path) {
             send(r.deck, Cmd::Seek, dk.restorePos * r.track->sampleRate);
             dk.restorePos = -1;
+        }
+        if (pendingPlayOnLoad_[r.deck]) {
+            pendingPlayOnLoad_[r.deck] = false;
+            if (!engine_.deckStatus[r.deck].playing.load()) send(r.deck, Cmd::TogglePlay);
         }
         // Solo las pistas que se han podido abrir entran en la biblioteca.
         if (!library_.find(dk.path)) library_.addFiles({dk.path});
@@ -601,8 +684,16 @@ void App::pollMidi() {
             break;
         case MA_Pitch: {
             const float r = pitchRange(d);
-            // Valor 0 = arriba del fader = más lento (como en la interfaz).
-            absolute(c, (dk.pitch / r + 1.f) * 0.5f, [&](float v) { if (p.syncTo.load() >= 0) dk.sync = false; dk.pitch = (v * 2.f - 1.f) * r; p.pitch = dk.pitch; });
+            // Con pitchInvertUi=false (por defecto): arriba (c.value=0 en CC estándar o 1 tras invertir) = + más rápido.
+            MidiCommand cmd = c;
+            if (!settings_.pitchInvertUi) cmd.value = 1.f - cmd.value;
+            const float cur01 = std::clamp((dk.pitch / std::max(r, 0.01f) + 1.f) * 0.5f, 0.f, 1.f);
+            absolute(cmd, cur01, [&](float v) {
+                if (p.syncTo.load() >= 0) dk.sync = false;
+                dk.pitch = std::clamp((v * 2.f - 1.f) * r, -r, r);
+                p.pitch = dk.pitch;
+                dk.hasPendingPitchPrompt = false;
+            });
             break;
         }
         case MA_FxAmount: absolute(c, p.fxAmount.load(), [&](float v) { p.fxAmount = v; }); break;
@@ -755,6 +846,15 @@ void App::onDropFiles(const std::vector<std::wstring>& files, ImVec2 pos) {
     for (auto& f : files) {
         const DWORD attr = GetFileAttributesW(f.c_str());
         if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) { library_.addFolder(f); notify("Carpeta añadida: " + toUtf8(f)); continue; }
+        const std::wstring ext = extensionLower(f);
+        if (ext == L".m3u" || ext == L".m3u8") {
+            const int plIdx = library_.importM3u(f);
+            if (plIdx >= 0) {
+                BrowseSrc bs; bs.kind = Src::Lista; bs.list = plIdx; selectSource(bs);
+                notify("Lista importada con estilos y Hot Cues: " + toUtf8(fileNameOf(f)), false);
+            }
+            continue;
+        }
         expanded.push_back(f);
     }
     if (expanded.empty()) return;

@@ -1,3 +1,6 @@
+#include <windows.h>
+#include <shellapi.h>
+#include <filesystem>
 // Dibujo de la interfaz principal de Ramiro DJ (diseño 0.5: azul noche,
 // turquesa y coral). El navegador de pistas está en ui_browser.cpp.
 #include "app.h"
@@ -141,8 +144,52 @@ void App::logic() {
     separatorTick();
     if (!autotest_.active && now_ - lastSessionSave_ > 5.0) { lastSessionSave_ = now_; saveSession(false); }
     static double lastMeta = 0;
-    if (now_ - lastMeta > 1.0) { lastMeta = now_; for (int d = 0; d < kNumDecks; ++d) { syncDeckKey(d); persistDeckMeta(d); } }
+    if (now_ - lastMeta > 1.0) {
+        lastMeta = now_;
+        for (int d = 0; d < kNumDecks; ++d) { syncDeckKey(d); persistDeckMeta(d); }
+        if (library_.reloadExternalChanges()) {
+            sortDirty_ = true;
+            refreshView();
+            notify("Listas, estilos y Hot Cues sincronizados en vivo desde ElverKey Studio ⚡", false);
+        }
+    }
     pollVdjImport();
+    // Automatización en tiempo real del Ensayo de Transición A -> B (Mix Lab)
+    if (mixLabRehearsal_) {
+        const double posA = deck_[0].track ? deckPosSec(0) : 0.0;
+        const double fade = std::max(2.0, mixLabRehearsalFadeSec_);
+        if (!deck_[0].track || !deck_[1].track) {
+            // Esperando a que terminen de cargar los dos platos
+        } else if (posA >= mixLabRehearsalExitA_ && posA <= mixLabRehearsalExitA_ + fade) {
+            if (!mixLabRehearsalBStarted_) {
+                mixLabRehearsalBStarted_ = true;
+                setSync(1, true);
+                send(1, Cmd::Seek, mixLabRehearsalEntryB_ * deck_[1].track->sampleRate);
+                if (!engine_.deckStatus[1].playing.load()) send(1, Cmd::TogglePlay);
+            }
+            const float prog = (float)std::clamp((posA - mixLabRehearsalExitA_) / fade, 0.0, 1.0);
+            engine_.mixer.crossfader = prog;
+            // Intercambio suave de graves (EQ Low swap) en el punto medio (prog = 0.5)
+            if (prog < 0.5f) {
+                engine_.deck[0].eqLow = 0.5f;
+                engine_.deck[1].eqLow = prog * 0.6f;
+            } else {
+                engine_.deck[0].eqLow = std::max(0.05f, 0.5f * (1.0f - (prog - 0.5f) * 1.8f));
+                engine_.deck[1].eqLow = 0.5f;
+            }
+        } else if (mixLabRehearsalBStarted_ && posA > mixLabRehearsalExitA_ + fade) {
+            // Transición completada: dejar sonando el Plato B a pleno y restaurar EQ de A tras 5 s
+            engine_.mixer.crossfader = 1.0f;
+            engine_.deck[1].eqLow = 0.5f;
+            if (posA > mixLabRehearsalExitA_ + fade + 5.0) {
+                if (engine_.deckStatus[0].playing.load()) send(0, Cmd::TogglePlay);
+                engine_.deck[0].eqLow = 0.5f;
+                mixLabRehearsal_ = false;
+                notify("Ensayo de transición A→B completado ⚡", false);
+            }
+        }
+    }
+
     if (now_ - lastSave_ > 15.0) { lastSave_ = now_; library_.save(); if (!autotest_.active) settings_.save(); }
     updateAutotest();
 }
@@ -348,6 +395,10 @@ void App::frame() {
         const float h = std::clamp((bottom0 - y) * 0.6f, std::min(320 * s, bottom0 - y - browserMin - gap), bottom0 - y - browserMin - gap);
         drawSeparator(ImVec2(o.x + gap, y), ImVec2(o.x + sz.x - gap, y + h));
         y += h + gap;
+    } else if (mode_ == 3) {
+        // ELVERKEY / MIX LAB a pantalla completa (ocupa todo el espacio hasta la barra de estado).
+        drawElverKeyPanel(ImVec2(o.x + gap, y), ImVec2(o.x + sz.x - gap, bottom0));
+        y = bottom0;
     } else if (mode_ == 2) {
         // BIBLIOTECA: navegador a pantalla completa; arriba, lo esencial de cada plato.
         if (settings_.showWaves) {
@@ -406,7 +457,7 @@ void App::frame() {
         y += rackHNow + gap;
         if (rackOpen) hsplit("##racksplit", y - gap * 0.5f, &settings_.rackH, rackHNow, 200.f, 420.f, nullptr);
     }
-    drawBrowser(ImVec2(o.x + gap, y), ImVec2(o.x + sz.x - gap, bottom0));
+    if (mode_ != 3) drawBrowser(ImVec2(o.x + gap, y), ImVec2(o.x + sz.x - gap, bottom0));
     drawStatusBar(ImVec2(o.x, o.y + sz.y - statusH), ImVec2(o.x + sz.x, o.y + sz.y));
     {
         // Cambio de vista: fundido corto (150 ms) desde el fondo, sin coste cuando no hay cambio.
@@ -421,6 +472,7 @@ void App::frame() {
     drawConfirmLoad();
     if (showRecording_) drawRecordingDialog();
     if (showLibraryTools_) drawLibraryTools();
+    if (showElverKey_ && mode_ != 3) drawElverKeyWindow();
     if (showAudio_) drawAudioDialog();
     if (showMidi_) drawMidiDialog();
     if (showPrefs_) drawPrefsDialog();
@@ -503,6 +555,30 @@ void App::drawTopBar(float h) {
 
     // 0.11.1: QUITAR FX (cuántos efectos y filtros quedan puestos, cuáles son, y quitarlos de un clic)
     drawFxClearButton(rx, by, bh);
+
+    // Botón directo ELVERKEY / MIX LAB (ventana interna integrada + selector de color)
+    {
+        const char* ekLbl = "ELVERKEY ⚡";
+        const float ekTw = fontHead->CalcTextSizeA(14 * s, FLT_MAX, 0, ekLbl).x;
+        const float ekW = ekTw + 24 * s;
+        rx -= ekW + 8 * s;
+        const ImVec2 ep(rx, by), eq(rx + ekW, by + bh);
+        ImGui::SetCursorScreenPos(ep);
+        const bool ekActive = (mode_ == 3) || showElverKey_;
+        if (ImGui::InvisibleButton("##elverkey_btn", ImVec2(ekW, bh))) {
+            if (showElverKey_) showElverKey_ = false;
+            else mode_ = (mode_ == 3) ? 0 : 3;
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            if (mode_ == 3) mode_ = 0;
+            showElverKey_ = !showElverKey_;
+        }
+        const bool ekHov = ImGui::IsItemHovered();
+        dl->AddRectFilled(ep, eq, ekActive ? col::withAlpha(col::DeckA, 55) : (ekHov ? col::mix(col::Panel2, col::DeckA, 0.22f) : col::mix(col::Panel2, col::DeckA, 0.10f)), 7 * s);
+        dl->AddRect(ep, eq, ekActive ? col::DeckA : col::mix(col::Line, col::DeckA, ekHov ? 0.85f : 0.45f), 7 * s, 0, 1.2f * s);
+        dl->AddText(fontHead, 14 * s, ImVec2(ep.x + 12 * s, cy - 8 * s), ekActive ? col::DeckA : col::Text, ekLbl);
+        ImGui::SetItemTooltip("Abrir/cerrar la ventana interna ELVERKEY / MIX LAB (rueda armónica, banco A→B, auto-set y colores).\nClic derecho: fijar como vista acoplada arriba.");
+    }
 
     // Auriculares (preescucha)
     {
@@ -589,18 +665,19 @@ void App::drawTopBar(float h) {
     for (auto& j : stems_.jobs()) if (!j.done && !j.failed) ++pend;
     char sepLbl[40];
     std::snprintf(sepLbl, sizeof sepLbl, pend ? "SEPARADOR (%d)" : "SEPARADOR", pend);
-    const char* labels[3] = {"MEZCLA", "BIBLIOTECA", sepLbl};
-    const int modes[3] = {0, 2, 1};
-    const char* tips[3] = {"Dos platos, mezclador y navegador", "Navegador a pantalla completa (carpetas, listas y Sidelist)",
+    const char* labels[4] = {"MEZCLA", "BIBLIOTECA", "ELVERKEY / MIX LAB", sepLbl};
+    const int modes[4] = {0, 2, 3, 1};
+    const char* tips[4] = {"Dos platos, mezclador y navegador", "Navegador a pantalla completa (carpetas, listas y Sidelist)",
+                           "ElverKey Studio / Mix Lab integrado: rueda Camelot, banco de transiciones A→B, auto-set por estilo y temas de color",
                            "Separa una canción en voz e instrumentos (tipo Moises)"};
-    const float tfs = 16 * s;
-    float tw[3], total = 0;
-    for (int i = 0; i < 3; ++i) { tw[i] = fontHead->CalcTextSizeA(tfs, FLT_MAX, 0, labels[i]).x + 40 * s; total += tw[i]; }
+    const float tfs = 15 * s;
+    float tw[4], total = 0;
+    for (int i = 0; i < 4; ++i) { tw[i] = fontHead->CalcTextSizeA(tfs, FLT_MAX, 0, labels[i]).x + 30 * s; total += tw[i]; }
     float tx = std::max(logoEnd, std::min((a.x + b.x - total) * 0.5f, rightStart - total));
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         ImGui::SetCursorScreenPos(ImVec2(tx, a.y));
         ImGui::PushID(i);
-        if (ImGui::InvisibleButton("##modo", ImVec2(tw[i], h - 1))) mode_ = modes[i];
+        if (ImGui::InvisibleButton("##modo", ImVec2(tw[i], h - 1))) { mode_ = modes[i]; showElverKey_ = false; }
         ImGui::PopID();
         const bool hov = ImGui::IsItemHovered(), on = mode_ == modes[i];
         ImGui::SetItemTooltip("%s", tips[i]);
@@ -974,8 +1051,15 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
                     ImGui::EndTooltip();
                 }
             }
+            std::string artLine = dk.artist.empty() ? "Artista desconocido" : dk.artist;
+            {
+                std::lock_guard<std::recursive_mutex> lk(library_.mutex());
+                if (const LibTrack* lt = library_.find(dk.path)) {
+                    if (!lt->genre.empty()) artLine += "  ·  " + lt->genre;
+                }
+            }
             dl->AddText(f, 15 * s, ImVec2(tx, ca.y + 25 * s), col::TextDim,
-                        ellipsize(dk.artist.empty() ? "Artista desconocido" : dk.artist, ix1 - tx - kw - 10 * s, f, 15 * s).c_str());
+                        ellipsize(artLine, ix1 - tx - kw - 10 * s, f, 15 * s).c_str());
         }
         // Tiempos y estado
         const float ty = ca.y + 58 * s;
@@ -993,6 +1077,76 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
             float bx0 = tx + ew + 10 * s + fontHead->CalcTextSizeA(16 * s, FLT_MAX, 0, rem.c_str()).x + 12 * s;
             // Chips de estado a la derecha. El primero (0.11.3): el botón de efectos del plato.
             float chx = drawDeckFxButton(d, ix1, ty + 3 * s, 18 * s, std::max(40 * s, ix1 - bx0 - 4 * s), ix1 - bx0 - 116 * s);
+            // Botón compacto "💡 Siguiente" (recomendador armónico instantáneo para este plato)
+            if (has && chx - bx0 > 74 * s) {
+                const char* recTxt = "💡 Siguiente";
+                const float rw = BadgeWidth(18 * s, recTxt, fontHead, 11.5f * s);
+                chx -= rw;
+                const ImVec2 rp(chx, ty + 3 * s);
+                Badge(dl, rp, 18 * s, recTxt, col::DeckA, false, fontHead, 11.5f * s);
+                ImGui::SetCursorScreenPos(rp);
+                char rbid[24]; std::snprintf(rbid, sizeof rbid, "##nextrec%d", d);
+                if (ImGui::InvisibleButton(rbid, ImVec2(rw, 18 * s))) ImGui::OpenPopup("nextrec_popup");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ver las 8 mejores canciones compatibles en clave, BPM y estilo para mezclar con este plato");
+                chx -= 4 * s;
+            }
+            if (ImGui::BeginPopup("nextrec_popup")) {
+                ImGui::TextColored(toVec4(acc), "💡 SIGUIENTES RECOMENDADAS PARA PLATO %s (%s · %.1f BPM)",
+                                   d ? "B" : "A", dk.meta.key >= 0 ? keyCamelot(dk.meta.key) : "—", engine_.effectiveBpm(d));
+                ImGui::Separator();
+                std::lock_guard<std::recursive_mutex> lk(library_.mutex());
+                struct QuickRec { const LibTrack* t; int sc; std::string why; };
+                std::vector<QuickRec> recs;
+                const double refBpm = dk.meta.bpm > 0 ? engine_.effectiveBpm(d) : 126.0;
+                const int refKey = soundingKey(d);
+                for (const auto& cand : library_.tracks()) {
+                    if (cand.missing || cand.path == dk.path || cand.path == deck_[1 - d].path || cand.meta.bpm <= 0) continue;
+                    double r = cand.meta.bpm / refBpm;
+                    if (r > 1.5) r /= 2.0; else if (r < 0.75) r *= 2.0;
+                    double dPct = std::fabs(r - 1.0) * 100.0;
+                    if (dPct > 6.5) continue;
+                    int hPts = 50; const char* hWhy = "Libre";
+                    if (refKey >= 0 && cand.meta.key >= 0) {
+                        const int na = keyCamelotNumber(refKey), nb = keyCamelotNumber(cand.meta.key);
+                        const bool ma = keyIsMajor(refKey), mb = keyIsMajor(cand.meta.key);
+                        int df = (nb - na) % 12; if (df > 6) df -= 12; if (df < -6) df += 12;
+                        if (ma == mb && df == 0) { hPts = 100; hWhy = "Misma clave"; }
+                        else if (ma == mb && std::abs(df) == 1) { hPts = 92; hWhy = "Vecina ±1"; }
+                        else if (ma != mb && df == 0) { hPts = 88; hWhy = "Relativa M/m"; }
+                        else if (ma == mb && (df == 2 || df == -5)) { hPts = 75; hWhy = "Subida energía"; }
+                        else continue;
+                    }
+                    int sc = std::clamp((int)std::lround(hPts * 0.68 + 25.0 * (1.0 - dPct / 7.0) + (!cand.genre.empty() ? 7.0 : 3.0)), 0, 100);
+                    recs.push_back({&cand, sc, std::string(hWhy)});
+                }
+                std::sort(recs.begin(), recs.end(), [](const QuickRec& a, const QuickRec& b) { return a.sc > b.sc; });
+                if (recs.empty()) {
+                    ImGui::TextDisabled("No hay candidatas cercanas analizadas en la biblioteca.");
+                } else {
+                    for (size_t ri = 0; ri < std::min<size_t>(8, recs.size()); ++ri) {
+                        const auto& qr = recs[ri];
+                        ImGui::PushID((int)ri);
+                        char line[256];
+                        std::snprintf(line, sizeof line, "[%d pts] %s — %s  (%s · %.1f BPM · %s)",
+                                      qr.sc, qr.t->artist.empty() ? "Artista" : qr.t->artist.c_str(), qr.t->title.c_str(),
+                                      qr.t->meta.key >= 0 ? keyCamelot(qr.t->meta.key) : "—", qr.t->meta.bpm,
+                                      qr.t->genre.empty() ? "—" : qr.t->genre.c_str());
+                        if (ImGui::Button(d == 0 ? "→ Plato B" : "→ Plato A")) {
+                            loadToDeck(1 - d, qr.t->path);
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Mix Lab")) {
+                            mode_ = 3; showElverKey_ = false;
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextUnformatted(line);
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::EndPopup();
+            }
             auto chip = [&](const char* txt, ImU32 c) {
                 const float w = BadgeWidth(18 * s, txt, fontHead, 12 * s);
                 chx -= w;
@@ -1163,6 +1317,50 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
     }
     y += bh + 10 * s;
 
+    // Aviso interactivo si al cargar la pista había quedado activado el pitch anterior
+    if (dk.hasPendingPitchPrompt && has) {
+        const float barH = 24 * s;
+        const ImVec2 pa(cx0, y - 4 * s), pb(cx0 + W, y - 4 * s + barH);
+        dl->AddRectFilled(pa, pb, col::withAlpha(col::Amber, 42), 5 * s);
+        dl->AddRect(pa, pb, col::Amber, 5 * s, 0, 1.2f * s);
+        char msgP[96];
+        std::snprintf(msgP, sizeof msgP, "Pitch ant. %+.1f%%:", dk.prevPitchVal * 100.f);
+        dl->AddText(fontHead, 12 * s, ImVec2(pa.x + 8 * s, pa.y + 4 * s), col::Amber, msgP);
+        float bx = pa.x + fontHead->CalcTextSizeA(12 * s, FLT_MAX, 0, msgP).x + 14 * s;
+        if (dk.hasMatchedPitch) {
+            ImGui::SetCursorScreenPos(ImVec2(bx, pa.y + 2 * s));
+            char eqLbl[64];
+            std::snprintf(eqLbl, sizeof eqLbl, "Mantener los 2 igualados (%+.1f%%)##eqp%d", dk.matchedPitchVal * 100.f, d);
+            const float bw1 = fontHead->CalcTextSizeA(11.5f * s, FLT_MAX, 0, eqLbl).x - 20 * s;
+            if (NeonButton(eqLbl, col::Green, std::fabs(dk.pitch - dk.matchedPitchVal) < 0.0005f, ImVec2(bw1, barH - 4 * s), true, fontHead, 11.5f * s)) {
+                if (std::fabs(dk.matchedPitchVal) > settings_.pitchRange[d] / 100.f) {
+                    for (float rng : {8.f, 16.f, 50.f}) if (std::fabs(dk.matchedPitchVal) <= rng / 100.f) { settings_.pitchRange[d] = rng; break; }
+                }
+                dk.pitch = dk.matchedPitchVal; p.pitch = dk.pitch;
+                setSync(d, true);
+                dk.hasPendingPitchPrompt = false;
+            }
+            bx += bw1 + 6 * s;
+        }
+        ImGui::SetCursorScreenPos(ImVec2(bx, pa.y + 2 * s));
+        char oldLbl[48];
+        std::snprintf(oldLbl, sizeof oldLbl, "Usar %+.1f%%##oldp%d", dk.prevPitchVal * 100.f, d);
+        const float bw2 = 82 * s;
+        if (NeonButton(oldLbl, col::Amber, false, ImVec2(bw2, barH - 4 * s), true, fontHead, 11.5f * s)) {
+            dk.pitch = dk.prevPitchVal; p.pitch = dk.pitch;
+            dk.hasPendingPitchPrompt = false;
+        }
+        bx += bw2 + 6 * s;
+        ImGui::SetCursorScreenPos(ImVec2(bx, pa.y + 2 * s));
+        char zeroLbl[32];
+        std::snprintf(zeroLbl, sizeof zeroLbl, "Dejar 0%%%%##zp%d", d);
+        if (NeonButton(zeroLbl, acc, std::fabs(dk.pitch) < 0.0005f, ImVec2(68 * s, barH - 4 * s), true, fontHead, 11.5f * s)) {
+            dk.pitch = 0.f; p.pitch = 0.f;
+            dk.hasPendingPitchPrompt = false;
+        }
+        y += barH + 2 * s;
+    }
+
     // ---- Pads: cues 1-8, loop, salto, rejilla, tono y efecto
     drawDeckTabs(d, cx0, y, W, ca.y + ch - y);
 
@@ -1187,12 +1385,60 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
         const float range = pitchRange(d);
         char fid[16];
         std::snprintf(fid, sizeof fid, "##pitch%d", d);
-        if (VFader(fid, &pv, -range, range, 0.f, ImVec2(pw, fh), acc, true)) {
+        const ImVec2 faderPos = ImGui::GetCursorScreenPos();
+        if (VFader(fid, &pv, -range, range, 0.f, ImVec2(pw, fh), acc, settings_.pitchInvertUi)) {
             dk.pitch = pv;
             p.pitch = pv;
+            dk.hasPendingPitchPrompt = false;
+            pickup_[MA_Pitch * 2 + d].engaged = false;
             if (dk.sync && p.syncTo.load() >= 0) dk.sync = false;  // el MASTER puede mover su pitch sin perder el SYNC
         }
-        ImGui::SetItemTooltip("Pitch %+.2f %% · arriba más lento, abajo más rápido · doble clic: 0 · Mayús: ajuste fino", dk.pitch * 100.f);
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("menupitch");
+        // Dibujar signos + y − en los extremos del fader de pitch y marquita ámbar de soft-takeover del mando físico
+        {
+            const char* topSign = settings_.pitchInvertUi ? "−" : "+";
+            const char* botSign = settings_.pitchInvertUi ? "+" : "−";
+            dl->AddText(fontHead, 12 * s, ImVec2(faderPos.x + 3 * s, faderPos.y + 1 * s), col::withAlpha(col::TextDim, 190), topSign);
+            dl->AddText(fontHead, 12 * s, ImVec2(faderPos.x + 3 * s, faderPos.y + fh - 14 * s), col::withAlpha(col::TextDim, 190), botSign);
+            const auto& pk = pickup_[MA_Pitch * 2 + d];
+            if (midi_.settings().softTakeover && pk.hasPrev && !pk.engaged) {
+                const float tHw = settings_.pitchInvertUi ? pk.prev : (1.f - pk.prev);
+                const float yHw = faderPos.y + 8 * s + std::clamp(tHw, 0.f, 1.f) * (fh - 16 * s);
+                dl->AddLine(ImVec2(faderPos.x + 2 * s, yHw), ImVec2(faderPos.x + pw - 2 * s, yHw), col::Amber, 2.2f * s);
+            }
+        }
+        ImGui::SetItemTooltip("Pitch %+.2f %% (%s) · doble clic: 0 · Mayús: ajuste fino · clic derecho: opciones de pitch",
+                              dk.pitch * 100.f, settings_.pitchInvertUi ? "arriba − más lento, abajo + más rápido" : "arriba + más rápido, abajo − más lento");
+        if (ImGui::BeginPopup("menupitch")) {
+            ImGui::TextColored(toVec4(acc), "OPCIONES DEL PITCH (PLATO %s)", d ? "B" : "A");
+            ImGui::Separator();
+            if (ImGui::MenuItem("Arriba = + más rápido, Abajo = − más lento (normal)", nullptr, !settings_.pitchInvertUi)) {
+                settings_.pitchInvertUi = false; settings_.save();
+            }
+            if (ImGui::MenuItem("Arriba = − más lento, Abajo = + más rápido (estilo tocadiscos)", nullptr, settings_.pitchInvertUi)) {
+                settings_.pitchInvertUi = true; settings_.save();
+            }
+            if (ImGui::MenuItem("Invertir dirección del fader físico del mando MIDI", nullptr, midi_.settings().pitchInvert)) {
+                midi_.settings().pitchInvert = !midi_.settings().pitchInvert;
+                midi_.save();
+            }
+            if (ImGui::MenuItem("Evitar saltos bruscos del mando físico (Soft-Takeover)", nullptr, midi_.settings().softTakeover)) {
+                midi_.settings().softTakeover = !midi_.settings().softTakeover;
+                midi_.save();
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("Al cargar canción si quedó pitch activo:");
+            if (ImGui::MenuItem("Mantener siempre los 2 platos igualados y avisar", nullptr, settings_.pitchOnLoadMode == 0)) {
+                settings_.pitchOnLoadMode = 0; settings_.save();
+            }
+            if (ImGui::MenuItem("Poner a 0 % y avisar por si quieres mantener el pitch anterior", nullptr, settings_.pitchOnLoadMode == 1)) {
+                settings_.pitchOnLoadMode = 1; settings_.save();
+            }
+            if (ImGui::MenuItem("Conservar el % de pitch anterior sin preguntar", nullptr, settings_.pitchOnLoadMode == 2)) {
+                settings_.pitchOnLoadMode = 2; settings_.save();
+            }
+            ImGui::EndPopup();
+        }
         {
             const ImVec2 pp = ImGui::GetCursorScreenPos();
             NeonButton("##bendm", acc, dk.buttonBend < 0, ImVec2(pw, bh2), has);
@@ -1736,9 +1982,9 @@ void App::drawStatusBar(ImVec2 a, ImVec2 b) {
         std::snprintf(midi, sizeof midi, "  ·  Mando: %s%s", name.c_str(), midi_.shiftHeld() ? " [SHIFT]" : "");
     }
     if (recorder_.active())
-        std::snprintf(r, sizeof r, "● Grabando %s%s  ·  DJ Elver Galarga 0.11.3", formatTime(recorder_.seconds(), false).c_str(), engine_.status.recDropped.load() ? " · ¡pérdidas!" : "");
+        std::snprintf(r, sizeof r, "● Grabando %s%s  ·  DJ Elver Galarga 0.13.0 Super", formatTime(recorder_.seconds(), false).c_str(), engine_.status.recDropped.load() ? " · ¡pérdidas!" : "");
     else
-        std::snprintf(r, sizeof r, "%s · %s · %u Hz · %.1f ms · CPU %d %%%s  ·  DJ Elver Galarga 0.11.3", st.running ? st.deviceName.c_str() : "Sin audio", st.backend.c_str(),
+        std::snprintf(r, sizeof r, "%s · %s · %u Hz · %.1f ms · CPU %d %%%s  ·  DJ Elver Galarga 0.13.0 Super", st.running ? st.deviceName.c_str() : "Sin audio", st.backend.c_str(),
                       st.sampleRate, latMs, (int)std::lround(engine_.status.cpuLoad.load() * 100), midi);
     const std::string rs = ellipsize(r, (b.x - a.x) * 0.45f, f, fs);
     const float rw = f->CalcTextSizeA(fs, FLT_MAX, 0, rs.c_str()).x;

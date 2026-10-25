@@ -385,6 +385,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
+    io.ConfigErrorRecoveryEnableTooltip = false;
+    io.ConfigErrorRecoveryEnableDebugLog = false;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     // Escala final = la de Windows × el tamaño de la interfaz elegido en Ramiro DJ.
     float appliedScale = scale * app.settings().uiScale / 100.f;

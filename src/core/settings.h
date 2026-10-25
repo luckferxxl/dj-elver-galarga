@@ -23,6 +23,8 @@ struct Settings {
     int recFormat = 0;          // RecFormat
     double minBpm = 70, maxBpm = 180;
     float pitchRange[2] = {8.f, 8.f};  // ± %
+    bool pitchInvertUi = false;        // false = arriba más rápido (+), true = arriba más lento (-)
+    int pitchOnLoadMode = 0;           // 0 = mantener los 2 igualados y avisar, 1 = poner a 0% y avisar, 2 = conservar pitch anterior
     bool quantize = true;
     int xfCurve = 0;
     int colorFx = 0;            // 0.11: color de las ruletas FILTER de la mesa (ColorFxType)

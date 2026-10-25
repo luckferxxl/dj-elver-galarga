@@ -1,8 +1,20 @@
-# DJ Elver Galarga 0.11.3
+# DJ Elver Galarga 0.13.0 Super
 
 Aplicación de DJ para Windows 10/11 (64 bits): dos platos, mezclador, biblioteca, grabación de la mezcla y MIDI.
 
 Es **software libre** (licencia GPL versión 2 o posterior, ver `COPYING.txt`); el código fuente va con cada versión.
+
+## Novedades de la 0.13.0 Super: ElverKey Studio / Mix Lab integrado a pantalla completa
+- **ELVERKEY / MIX LAB integrado dentro del programa (a pantalla completa o en ventana flotante)**:
+  - **01 · Descubrir Mezclas**: rueda Camelot interactiva de 24 tonos, buscador instantáneo de canciones, filtros de afinidad, margen de BPM y estilo, y envío o arrastre directo a cualquier Playlist o Plato.
+  - **02 · Banco de Transiciones A→B (Mix Lab)**: visualización de los 8 Hot Cues y las curvas de cruce superpuestas con el punto de **intercambio de graves (`EQ LOW SWAP`)**, y botón **▶ Ensayar Transición en Vivo (15 s)** que automatiza el crossfader y los graves sobre los platos reales.
+  - **03 · Generador Auto-Set por Estilo y Curva de Energía**: 5 perfiles (*Libre, Warm-Up → Peak Time, Peak Time, Montaña Rusa y After/Cierre*) con gráfica interactiva de energía/BPM y reordenación en vivo (`↑` / `↓`).
+  - **04 · Ideas Guardadas y Auditoría de Biblioteca**: cuaderno de mezclas `A→B`, detector de posibles duplicados cara a cara (`Cargar A/B`) y corrector de mitad/doble BPM (`×2 / ÷2`).
+  - **Selector de 12 temas de color en vivo + personalizador RGB** (`Color A`, `Color B`, `Fondo`).
+- **Semáforo armónico en vivo en la Biblioteca** (verde = mezcla perfecta, azul = subida de energía, ámbar = ajuste BPM/puente) y botón **💡 Siguiente** en la cabecera de cada plato con las 8 mejores canciones compatibles a 1 clic.
+- **Banderas visuales `MIX IN ▶` y `◀ MIX OUT`** en las ondas grandes y en cada plato con **cuenta atrás en vivo en compases y segundos** antes del punto de salida.
+- **Columna `ESTILO` siempre visible** en la biblioteca (con inferencia automática multicapa y lectura de `genre=` y `cues=` en `#EXTELVER:`).
+- **Fader de pitch en sentido natural** (`+` arriba, `−` abajo, configurable con clic derecho) con protección anti-salto (*Soft-Takeover*) y barra interactiva de aviso cuando queda un pitch anterior activo al cargar una pista.
 
 ## Novedades de la 0.11.3: botón de efectos en cada plato
 - En la cabecera de cada plato, a la derecha de los tiempos, hay un botón de efectos que está **siempre a la vista**, también en las pestañas CUES, LOOP, SALTO, etc.:

@@ -429,6 +429,42 @@ void App::drawZoomWave(int d, ImVec2 a, ImVec2 b) {
         const double h = st.hotCues[i].load();
         if (h >= 0) { char n[4]; std::snprintf(n, sizeof n, "%d", i + 1); marker(h / sr, kHotColors[i], n, dk.meta.hotCueNames[i]); }
     }
+    // Banderas recomendadas MIX IN ▶ y ◀ MIX OUT
+    if (dk.mixInSec >= 0.0) {
+        const float xin = xOf(dk.mixInSec);
+        if (xin >= a.x - 90 * s && xin <= b.x + 10 * s) {
+            dl->AddLine(ImVec2(xin, a.y), ImVec2(xin, b.y), col::Green, 2.0f * s);
+            const char* inTxt = "MIX IN ▶";
+            const float tw = fontHead->CalcTextSizeA(11 * s, FLT_MAX, 0, inTxt).x + 10 * s;
+            dl->AddRectFilled(ImVec2(xin, b.y - 16 * s), ImVec2(xin + tw, b.y - 1 * s), col::Green, 3 * s);
+            dl->AddText(fontHead, 11 * s, ImVec2(xin + 5 * s, b.y - 15 * s), col::onColor(col::Green), inTxt);
+        }
+    }
+    if (dk.mixOutSec >= 0.0) {
+        const float xout = xOf(dk.mixOutSec);
+        if (xout >= a.x - 90 * s && xout <= b.x + 90 * s) {
+            dl->AddLine(ImVec2(xout, a.y), ImVec2(xout, b.y), col::Amber, 2.0f * s);
+            const char* outTxt = "◀ MIX OUT";
+            const float tw = fontHead->CalcTextSizeA(11 * s, FLT_MAX, 0, outTxt).x + 10 * s;
+            dl->AddRectFilled(ImVec2(xout - tw, b.y - 16 * s), ImVec2(xout, b.y - 1 * s), col::Amber, 3 * s);
+            dl->AddText(fontHead, 11 * s, ImVec2(xout - tw + 5 * s, b.y - 15 * s), col::onColor(col::Amber), outTxt);
+        }
+        // Cuenta atrás en vivo en compases y segundos cuando se acerca a MIX OUT
+        const double secToOut = dk.mixOutSec - pos;
+        if (secToOut > 0.0 && secToOut <= 60.0 && bar > 0.0) {
+            const int barsLeft = std::max(1, (int)std::ceil(secToOut / bar));
+            if (barsLeft <= 32) {
+                char cdBuf[96];
+                std::snprintf(cdBuf, sizeof cdBuf, "⚡ MIX OUT en %d compases (%.1f s)", barsLeft, secToOut);
+                const float cw = fontHead->CalcTextSizeA(12 * s, FLT_MAX, 0, cdBuf).x + 14 * s;
+                const bool urgent = (barsLeft <= 4);
+                const float pulse = urgent ? (0.5f + 0.5f * std::sin((float)now_ * 10.0f)) : 1.0f;
+                const ImU32 bgC = urgent ? col::mix(col::Amber, col::Red, pulse * 0.7f) : col::Amber;
+                dl->AddRectFilled(ImVec2(b.x - cw - 8 * s, a.y + 4 * s), ImVec2(b.x - 8 * s, a.y + 22 * s), bgC, 4 * s);
+                dl->AddText(fontHead, 12 * s, ImVec2(b.x - cw - 1 * s, a.y + 5 * s), col::onColor(bgC), cdBuf);
+            }
+        }
+    }
     // Cabezal
     dl->AddRectFilled(ImVec2(cx - 1.5f * s, a.y), ImVec2(cx + 1.5f * s, b.y), IM_COL32(255, 255, 255, 240));
     dl->AddTriangleFilled(ImVec2(cx - 6 * s, a.y), ImVec2(cx + 6 * s, a.y), ImVec2(cx, a.y + 7 * s), IM_COL32(255, 255, 255, 255));
@@ -474,6 +510,8 @@ void App::drawZoomWave(int d, ImVec2 a, ImVec2 b) {
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Poner el CUE aquí")) send(d, Cmd::SetCueAt, at * sr);
+        if (ImGui::MenuItem("Marcar MIX IN ▶ aquí")) dk.mixInSec = at;
+        if (ImGui::MenuItem("Marcar ◀ MIX OUT aquí")) dk.mixOutSec = at;
         if (ImGui::MenuItem("Saltar aquí")) send(d, Cmd::Seek, at * sr);
         ImGui::Separator();
         if (ImGui::MenuItem("Empieza un compás aquí (ajustar la rejilla)", nullptr, false, hasGrid)) {
@@ -577,6 +615,27 @@ void App::drawOverview(int d, ImVec2 a, ImVec2 b) {
             char n[4]; std::snprintf(n, sizeof n, "%d", i + 1);
             dl->AddRectFilled(ImVec2(x, a.y), ImVec2(x + fz, a.y + fz), kHotColors[i], 2 * s, ImDrawFlags_RoundCornersBottomRight);
             CenterText(dl, ImVec2(x, a.y), ImVec2(x + fz, a.y + fz), col::onColor(kHotColors[i]), n, fontHead, fz * 0.85f);
+        }
+    }
+    if (dk.mixInSec >= 0.0 && dk.mixInSec <= len) {
+        const float xin = xOf(dk.mixInSec);
+        dl->AddLine(ImVec2(xin, a.y), ImVec2(xin, b.y), col::Green, 1.8f * s);
+        dl->AddTriangleFilled(ImVec2(xin, b.y - 8 * s), ImVec2(xin + 7 * s, b.y - 4 * s), ImVec2(xin, b.y), col::Green);
+    }
+    if (dk.mixOutSec >= 0.0 && dk.mixOutSec <= len) {
+        const float xout = xOf(dk.mixOutSec);
+        dl->AddLine(ImVec2(xout, a.y), ImVec2(xout, b.y), col::Amber, 1.8f * s);
+        dl->AddTriangleFilled(ImVec2(xout, b.y - 8 * s), ImVec2(xout - 7 * s, b.y - 4 * s), ImVec2(xout, b.y), col::Amber);
+        const double secToOut = dk.mixOutSec - pos;
+        if (secToOut > 0.0 && secToOut <= 60.0 && bar > 0.0) {
+            const int barsLeft = std::max(1, (int)std::ceil(secToOut / bar));
+            if (barsLeft <= 16) {
+                char cdB[64];
+                std::snprintf(cdB, sizeof cdB, "MIX OUT %d comp. (%.0fs)", barsLeft, secToOut);
+                const float tw = fontHead->CalcTextSizeA(10.5f * s, FLT_MAX, 0, cdB).x + 8 * s;
+                dl->AddRectFilled(ImVec2(b.x - tw - 3 * s, b.y - 14 * s), ImVec2(b.x - 3 * s, b.y - 1 * s), barsLeft <= 4 ? col::Red : col::Amber, 3 * s);
+                dl->AddText(fontHead, 10.5f * s, ImVec2(b.x - tw + 1 * s, b.y - 14 * s), col::onColor(col::Amber), cdB);
+            }
         }
     }
     const float cxq = xOf(st.cueFrames.load() / sr);

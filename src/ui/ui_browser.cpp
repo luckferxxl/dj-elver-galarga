@@ -1266,7 +1266,7 @@ void App::drawTrackList(ImVec2 a, ImVec2 b) {
         ImGui::TableSetupColumn("BPM", ImGuiTableColumnFlags_WidthFixed, 60 * s, 4);
         ImGui::TableSetupColumn("TONALIDAD", ImGuiTableColumnFlags_WidthFixed, (settings_.keyNotation == 1 ? 78 : 106) * s, 5);
         ImGui::TableSetupColumn("DURACIÓN", ImGuiTableColumnFlags_WidthFixed, 72 * s, 6);
-        ImGui::TableSetupColumn("GÉNERO", ImGuiTableColumnFlags_None, 0.6f, 11);
+        ImGui::TableSetupColumn("ESTILO", ImGuiTableColumnFlags_NoHide, 0.75f, 11);
         ImGui::TableSetupColumn("VALORACIÓN", ImGuiTableColumnFlags_WidthFixed, 92 * s, 12);
         ImGui::TableSetupColumn("REPROD.", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 64 * s, 7);
         ImGui::TableSetupColumn("AÑADIDA", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 88 * s, 8);
@@ -1274,14 +1274,13 @@ void App::drawTrackList(ImVec2 a, ImVec2 b) {
         ImGui::TableSetupColumn("##menu", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_NoResize |
                                               ImGuiTableColumnFlags_NoReorder, 30 * s, 10);
         {
-            // Lista estrecha (pantallas pequeñas con Sidelist y Detalles abiertos): GÉNERO y VALORACIÓN
-            // se ocultan solas para que TEMA y ARTISTA se lean; vuelven al haber sitio.
-            const bool narrow = ImGui::GetContentRegionAvail().x < 840 * s;
+            // ESTILO siempre visible (aunque en imgui.ini anterior estuviera oculto).
+            ImGui::TableSetColumnEnabled(7, true);
+            const bool narrow = ImGui::GetContentRegionAvail().x < 720 * s;
             if (narrow) {
-                const bool g = ImGui::TableGetColumnFlags(7) & ImGuiTableColumnFlags_IsEnabled, v = ImGui::TableGetColumnFlags(8) & ImGuiTableColumnFlags_IsEnabled;
-                if (g || v) { autoHidCols_ = (g ? 1 : 0) | (v ? 2 : 0); ImGui::TableSetColumnEnabled(7, false); ImGui::TableSetColumnEnabled(8, false); }
+                const bool v = ImGui::TableGetColumnFlags(8) & ImGuiTableColumnFlags_IsEnabled;
+                if (v) { autoHidCols_ = 2; ImGui::TableSetColumnEnabled(8, false); }
             } else if (autoHidCols_) {
-                if (autoHidCols_ & 1) ImGui::TableSetColumnEnabled(7, true);
                 if (autoHidCols_ & 2) ImGui::TableSetColumnEnabled(8, true);
                 autoHidCols_ = 0;
             }
@@ -1453,15 +1452,44 @@ void App::drawTrackList(ImVec2 a, ImVec2 b) {
                 ImGui::TableNextColumn();
                 if (t) {
                     if (t->meta.key >= 0) {
-                        int rel = 0;  // 2 encaja, 1 encaja moviendo un semitono
+                        // Semáforo armónico en vivo respecto al plato activo:
+                        // 3 = Verde (armónica perfecta + BPM <=6%), 2 = Azul (Energy Boost +2/+7/Diagonal), 1 = Ámbar (tono compatible pero BPM lejano), 0 = neutro/choque
+                        int semState = -1;
+                        const char* semDesc = "";
                         for (int d = 0; d < kNumDecks; ++d) {
                             if (playingKeys[d] < 0 || deck_[d].path == t->path) continue;
-                            if (keysCompatible(playingKeys[d], t->meta.key)) rel = 2;
-                            else if (rel < 1 && keysClose(playingKeys[d], t->meta.key)) rel = 1;
+                            const int rk = playingKeys[d], tk = t->meta.key;
+                            const int na = keyCamelotNumber(rk), nb = keyCamelotNumber(tk);
+                            const bool ma = keyIsMajor(rk), mb = keyIsMajor(tk);
+                            int diff = (nb - na) % 12;
+                            if (diff > 6) diff -= 12;
+                            if (diff < -6) diff += 12;
+                            bool exactOrNeighbor = (ma == mb && std::abs(diff) <= 1) || (ma != mb && diff == 0);
+                            bool energyBoost = (ma == mb && (diff == 2 || diff == -5)) || ((!ma && diff == 1) || (ma && diff == -1));
+                            bool bpmOk = true;
+                            if (playingBpm[d] > 0 && t->meta.bpm > 0) {
+                                double r = t->meta.bpm / playingBpm[d];
+                                if (r > 1.5) r /= 2.0; else if (r < 0.75) r *= 2.0;
+                                bpmOk = (std::fabs(r - 1.0) <= 0.06);
+                            }
+                            int candState = 0;
+                            const char* candDesc = "Choque armónico con el plato activo";
+                            if (exactOrNeighbor && bpmOk) { candState = 3; candDesc = "VERDE · Mezcla armónica perfecta (misma clave, ±1 o relativa + BPM compatible)"; }
+                            else if (energyBoost && bpmOk) { candState = 2; candDesc = "AZUL · Subida de energía (+2, +7 semitono o cambio diagonal)"; }
+                            else if (exactOrNeighbor || energyBoost || keysClose(rk, tk)) { candState = 1; candDesc = "ÁMBAR · Tono compatible o cercano (requiere ajustar BPM o puente)"; }
+                            if (candState > semState) { semState = candState; semDesc = candDesc; }
                         }
                         const ImVec2 kp(ImGui::GetCursorScreenPos().x, c0.y + (rowH - 19 * s) * 0.5f);
-                        const float kw = drawKeyBadges(cdl, kp, 19 * s, t->meta.key, rel == 2);
-                        if (rel) DrawIcon(cdl, Ic::Check, ImVec2(kp.x + kw + 9 * s, kp.y + 9.5f * s), 13 * s, rel == 2 ? col::Green : col::withAlpha(col::Green, 100), rel == 2 ? 2.2f * s : 1.4f * s);
+                        const float kw = drawKeyBadges(cdl, kp, 19 * s, t->meta.key, semState == 3);
+                        if (semState >= 0) {
+                            const ImU32 semCol = semState == 3 ? col::Green : semState == 2 ? IM_COL32(56, 189, 248, 255) : semState == 1 ? col::Amber : col::withAlpha(col::Red, 95);
+                            const ImVec2 dotC(kp.x + kw + 8 * s, kp.y + 9.5f * s);
+                            cdl->AddCircleFilled(dotC, semState >= 2 ? 4.8f * s : 3.8f * s, semCol, 14);
+                            if (semState >= 2) cdl->AddCircle(dotC, 6.2f * s, col::withAlpha(semCol, 90), 14, 1.2f * s);
+                            if (ImGui::IsMouseHoveringRect(ImVec2(kp.x, c0.y), ImVec2(kp.x + kw + 18 * s, c0.y + rowH))) {
+                                ImGui::SetTooltip("%s", semDesc);
+                            }
+                        }
                     } else cdl->AddText(body, fs, ImVec2(ImGui::GetCursorScreenPos().x, ty), col::TextDim, t->meta.keyAnalyzed ? "?" : "…");
                 }
                 ImGui::TableNextColumn();
@@ -1470,10 +1498,20 @@ void App::drawTrackList(ImVec2 a, ImVec2 b) {
                     const float cx1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - 8 * s;
                     cdl->AddText(fontHead, fs, ImVec2(cx1 - fontHead->CalcTextSizeA(fs, FLT_MAX, 0, du.c_str()).x, ty), col::Text, du.c_str());
                 }
-                ImGui::TableNextColumn();  // Género
+                ImGui::TableNextColumn();  // Estilo
                 if (t && !t->genre.empty()) {
                     const float cw = ImGui::GetContentRegionAvail().x;
-                    cdl->AddText(body, fs, ImVec2(ImGui::GetCursorScreenPos().x, ty), col::TextDim, ellipsize(t->genre, cw, body, fs).c_str());
+                    const ImVec2 gp = ImGui::GetCursorScreenPos();
+                    const ImU32 gc = col::mix(col::DeckA, col::Text, 0.62f);
+                    cdl->AddText(body, fs, ImVec2(gp.x, ty), gc, ellipsize(t->genre, cw, body, fs).c_str());
+                    if (ImGui::IsMouseHoveringRect(ImVec2(gp.x, c0.y), ImVec2(gp.x + cw, c0.y + rowH))) {
+                        ImGui::SetTooltip("Estilo: %s\nClic con botón central para filtrar por este estilo", t->genre.c_str());
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+                            std::snprintf(search_, sizeof search_, "%s", t->genre.c_str());
+                        }
+                    }
+                } else {
+                    cdl->AddText(body, fs, ImVec2(ImGui::GetCursorScreenPos().x, ty), col::withAlpha(col::TextDim, 110), "—");
                 }
                 ImGui::TableNextColumn();  // Valoración (clic en las estrellas)
                 if (t) {

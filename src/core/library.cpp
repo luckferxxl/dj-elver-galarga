@@ -95,6 +95,163 @@ void hotFromText(const std::string& s, TrackMeta& m) {
             st = k + 1;
         }
 }
+
+struct ExtElverMeta {
+    bool valid = false;
+    double bpm = 0.0;
+    double grid = -1.0;
+    double energy = 0.0;
+    int key = -1;
+    std::string genre;
+    std::array<double, kNumHotCues> hotCuesSec;
+    std::array<std::string, kNumHotCues> hotCueNames;
+    ExtElverMeta() { hotCuesSec.fill(-1.0); }
+};
+
+static std::string inferGenreCpp(const std::string& artist, const std::string& title, const std::string& fileName, double bpm) {
+    std::string comb = foldForSearch(artist + " " + title + " " + fileName);
+    if (comb.find("hardgroove") != std::string::npos || comb.find("a paul") != std::string::npos || comb.find("kuss") != std::string::npos) return "Hardgroove / Techno";
+    if (comb.find("hard techno") != std::string::npos) return "Hard Techno";
+    if (comb.find("peak time") != std::string::npos) return "Peak Time Techno";
+    if (comb.find("melodic techno") != std::string::npos || comb.find("ananda") != std::string::npos) return "Melodic Techno";
+    if (comb.find("minimal") != std::string::npos || comb.find("deep tech") != std::string::npos) return "Minimal / Deep Tech";
+    if (comb.find("afro house") != std::string::npos || comb.find("sevilla") != std::string::npos) return "Afro House";
+    if (comb.find("deep house") != std::string::npos || comb.find("16bl") != std::string::npos) return "Deep House";
+    if (comb.find("progressive") != std::string::npos) return "Progressive House";
+    if (comb.find("tech house") != std::string::npos || comb.find("smeddles") != std::string::npos || comb.find("gosso") != std::string::npos || comb.find("felipe cortes") != std::string::npos) return "Tech House";
+    if (comb.find("reggaeton") != std::string::npos || comb.find("dembow") != std::string::npos) return "Reggaetón / Urbano";
+    if (comb.find("drum") != std::string::npos && comb.find("bass") != std::string::npos) return "Drum & Bass";
+    if (comb.find("trance") != std::string::npos) return "Trance";
+    if (bpm >= 158.0) return "Drum & Bass";
+    if (bpm >= 140.0) return "Hard Techno";
+    if (bpm >= 131.5) return "Peak Time Techno";
+    if (bpm >= 122.5) return "Tech House";
+    if (bpm >= 115.0) return "Deep House";
+    if (bpm >= 85.0) return "Reggaetón / Urbano";
+    return "";
+}
+
+static bool parseExtElverLine(const std::string& line, ExtElverMeta& out) {
+    const std::string prefix = "#EXTELVER:";
+    if (line.rfind(prefix, 0) != 0) return false;
+    out = ExtElverMeta{};
+    out.valid = true;
+    std::string rest = line.substr(prefix.size());
+    size_t pos = 0;
+    while (pos <= rest.size()) {
+        size_t sep = rest.find(';', pos);
+        std::string part = rest.substr(pos, sep == std::string::npos ? std::string::npos : sep - pos);
+        pos = (sep == std::string::npos) ? rest.size() + 1 : sep + 1;
+        size_t eq = part.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = part.substr(0, eq), v = part.substr(eq + 1);
+        if (k == "bpm") {
+            double b = std::atof(v.c_str());
+            if (b >= 20.0 && b <= 400.0) out.bpm = b;
+        } else if (k == "grid") {
+            double g = std::atof(v.c_str());
+            if (g >= 0.0 && g <= 30.0) out.grid = g;
+        } else if (k == "energy") {
+            double e = std::atof(v.c_str());
+            if (e >= 1.0 && e <= 10.0) out.energy = e;
+        } else if (k == "key") {
+            int parsed = parseKey(v);
+            if (parsed >= 0) out.key = parsed;
+        } else if (k == "genre" && !v.empty()) {
+            out.genre = v;
+        } else if (k == "cues" && !v.empty()) {
+            size_t cpos = 0;
+            int slot = 0;
+            while (cpos <= v.size() && slot < kNumHotCues) {
+                size_t csep = v.find(',', cpos);
+                std::string item = v.substr(cpos, csep == std::string::npos ? std::string::npos : csep - cpos);
+                cpos = (csep == std::string::npos) ? v.size() + 1 : csep + 1;
+                size_t p1 = item.find(':');
+                if (p1 == std::string::npos) continue;
+                double tSec = std::atof(item.substr(0, p1).c_str());
+                if (tSec < 0.0 || tSec > 7200.0) continue;
+                size_t p2 = item.find(':', p1 + 1);
+                std::string eStr = (p2 == std::string::npos) ? item.substr(p1 + 1) : item.substr(p1 + 1, p2 - p1 - 1);
+                std::string lbl = (p2 == std::string::npos) ? ("Cue " + std::to_string(slot + 1)) : item.substr(p2 + 1);
+                if (!eStr.empty() && !lbl.empty()) lbl += " " + eStr;
+                out.hotCuesSec[slot] = tSec;
+                out.hotCueNames[slot] = lbl;
+                ++slot;
+            }
+        }
+    }
+    return true;
+}
+
+static void applyExtElverToTrack(LibTrack& lt, const ExtElverMeta& em) {
+    if (!em.valid) return;
+    if (em.bpm >= 20.0) {
+        lt.meta.bpm = em.bpm;
+        lt.tagBpm = em.bpm;
+        if (em.grid >= 0.0) lt.meta.gridAnchorSec = em.grid;
+        lt.meta.analyzed = true;
+        lt.meta.gridSrc = 3;
+    }
+    if (em.key >= 0) {
+        lt.meta.key = em.key;
+        lt.meta.keyAnalyzed = true;
+        lt.meta.keySrc = 5;
+    }
+    if (em.energy >= 1.0) {
+        int stars = std::clamp((int)std::lround(em.energy / 2.0), 1, 5);
+        if (!lt.rating) lt.rating = stars;
+    }
+    if (!em.genre.empty()) {
+        lt.genre = em.genre;
+        lt.searchKey = foldForSearch(lt.artist + " " + lt.title + " " + lt.fileName + " " + lt.genre);
+    }
+    bool anyCue = false;
+    for (int i = 0; i < kNumHotCues; ++i) {
+        if (em.hotCuesSec[i] >= 0.0) {
+            lt.meta.hotCuesSec[i] = em.hotCuesSec[i];
+            lt.meta.hotCueNames[i] = em.hotCueNames[i];
+            if (!anyCue) { lt.meta.cueSec = em.hotCuesSec[i]; anyCue = true; }
+        }
+    }
+}
+
+static void tryLoadSiblingExtElver(LibTrack& lt) {
+    std::filesystem::path p(lt.path);
+    std::vector<std::filesystem::path> dirs;
+    if (p.has_parent_path()) {
+        dirs.push_back(p.parent_path());
+        if (p.parent_path().has_parent_path()) dirs.push_back(p.parent_path().parent_path());
+    }
+    for (const auto& d : dirs) {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(d, ec)) {
+            if (!entry.is_regular_file(ec)) continue;
+            auto ext = extensionLower(entry.path().wstring());
+            if (ext != L".m3u8" && ext != L".m3u") continue;
+            std::ifstream f(entry.path(), std::ios::binary);
+            if (!f) continue;
+            std::wstring base = entry.path().parent_path().wstring() + L"\\";
+            std::string line;
+            ExtElverMeta pending;
+            while (std::getline(f, line)) {
+                if (line.size() >= 3 && (unsigned char)line[0] == 0xEF && (unsigned char)line[1] == 0xBB && (unsigned char)line[2] == 0xBF) line = line.substr(3);
+                while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+                if (line.empty()) continue;
+                if (parseExtElverLine(line, pending)) continue;
+                if (line[0] == '#') continue;
+                std::wstring tp = fromUtf8(line);
+                if (tp.size() < 2 || (tp[1] != L':' && tp.rfind(L"\\\\", 0) != 0)) tp = base + tp;
+                for (auto& c : tp) if (c == L'/') c = L'\\';
+                if (_wcsicmp(tp.c_str(), lt.path.c_str()) == 0 && pending.valid) {
+                    applyExtElverToTrack(lt, pending);
+                    return;
+                }
+                pending = ExtElverMeta{};
+            }
+        }
+    }
+}
+
 } // namespace
 
 Library::Library() {
@@ -126,6 +283,14 @@ LibTrack Library::makeTrack(const std::wstring& path) {
     t.fileName = toUtf8(fileNameOf(path));
     t.searchKey = foldForSearch(t.artist + " " + t.title + " " + t.fileName + " " + t.genre);
     t.firstSeen = unixNow();
+    tryLoadSiblingExtElver(t);
+    if (t.genre.empty() || t.genre == "Electronic" || t.genre == "Other" || t.genre == "Unknown") {
+        std::string inf = inferGenreCpp(t.artist, t.title, t.fileName, t.meta.bpm > 0 ? t.meta.bpm : t.tagBpm);
+        if (!inf.empty()) {
+            t.genre = inf;
+            t.searchKey = foldForSearch(t.artist + " " + t.title + " " + t.fileName + " " + t.genre);
+        }
+    }
     return t;
 }
 
@@ -136,11 +301,39 @@ void Library::insertLocked(LibTrack t) {
         // Si el archivo cambió, el análisis anterior ya no vale.
         const bool changed = old.size != t.size || old.mtime != t.mtime;
         TrackMeta keep = old.meta;
+        TrackMeta incoming = t.meta;
+        const std::string keepGenre = old.genre;
         const int plays = old.playCount, rating = old.rating;
         const int64_t last = old.lastPlayed, first = old.firstSeen;
         old = std::move(t);
-        if (!changed) old.meta = keep;
-        else old.meta.hotCueNames = keep.hotCueNames;
+        if ((old.genre.empty() || old.genre == "Electronic") && !keepGenre.empty()) {
+            old.genre = keepGenre;
+            old.searchKey = foldForSearch(old.artist + " " + old.title + " " + old.fileName + " " + old.genre);
+        }
+        if (!changed) {
+            bool incomingHasCues = false, oldHasCues = false;
+            for (int c = 0; c < kNumHotCues; ++c) {
+                if (incoming.hotCuesSec[c] >= 0.0) incomingHasCues = true;
+                if (keep.hotCuesSec[c] >= 0.0) oldHasCues = true;
+            }
+            old.meta = keep;
+            if (incomingHasCues && !oldHasCues) {
+                old.meta.hotCuesSec = incoming.hotCuesSec;
+                old.meta.hotCueNames = incoming.hotCueNames;
+                if (incoming.cueSec > 0.0) old.meta.cueSec = incoming.cueSec;
+            }
+            if (incoming.gridSrc == 3 && incoming.bpm > 0.0) {
+                old.meta.bpm = incoming.bpm;
+                old.meta.gridAnchorSec = incoming.gridAnchorSec;
+                old.meta.analyzed = true;
+                old.meta.gridSrc = 3;
+            }
+            if (incoming.keySrc == 5 && incoming.key >= 0) {
+                old.meta.key = incoming.key;
+                old.meta.keyAnalyzed = true;
+                old.meta.keySrc = 5;
+            }
+        } else old.meta.hotCueNames = keep.hotCueNames;
         if (rating) old.rating = rating;   // la valoración puesta en Ramiro DJ se conserva
         old.playCount = plays; old.lastPlayed = last; old.firstSeen = first ? first : old.firstSeen;
         old.missing = false;
@@ -264,11 +457,27 @@ void Library::finishLoad() {
     std::lock_guard<std::recursive_mutex> lk(m_);
     for (auto& t : tracks_) {
         t.fileName = toUtf8(fileNameOf(t.path));
+        if (t.genre.empty() || t.genre == "Electronic" || t.genre == "Other") {
+            std::string inf = inferGenreCpp(t.artist, t.title, t.fileName, t.meta.bpm > 0 ? t.meta.bpm : t.tagBpm);
+            if (!inf.empty()) t.genre = inf;
+        }
         t.searchKey = foldForSearch(t.artist + " " + t.title + " " + t.fileName + " " + t.genre);
         uint64_t s; int64_t m;
         t.missing = !fileStat(t.path, s, m);
     }
     version_++;
+}
+
+bool Library::reloadExternalChanges() {
+    static int64_t lastSyncMtime = 0;
+    const std::wstring syncFile = appDataDir() + L"\\elverkey.sync";
+    uint64_t sz = 0; int64_t mt = 0;
+    if (!fileStat(syncFile, sz, mt)) return false;
+    if (lastSyncMtime == 0) { lastSyncMtime = mt; return false; }
+    if (mt == lastSyncMtime) return false;
+    lastSyncMtime = mt;
+    load();
+    return true;
 }
 
 void Library::save() {
@@ -665,6 +874,8 @@ int Library::importM3u(const std::wstring& file) {
     if (!f) return -1;
     std::wstring base = file.substr(0, file.find_last_of(L"\\/") + 1);
     std::vector<std::wstring> paths;
+    std::vector<std::pair<std::wstring, ExtElverMeta>> extMetas;
+    ExtElverMeta pending;
     std::string line;
     const bool m3u8 = extensionLower(file) == L".m3u8";
     auto validUtf8 = [](const std::string& x) {
@@ -680,7 +891,9 @@ int Library::importM3u(const std::wstring& file) {
     while (std::getline(f, line)) {
         if (line.size() >= 3 && (unsigned char)line[0] == 0xEF && (unsigned char)line[1] == 0xBB && (unsigned char)line[2] == 0xBF) line = line.substr(3);
         while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-        if (line.empty() || line[0] == '#') continue;
+        if (line.empty()) continue;
+        if (parseExtElverLine(line, pending)) continue;
+        if (line[0] == '#') continue;
         std::wstring p;
         // UTF-8 si es .m3u8 o si los bytes son UTF-8 válido (VirtualDJ y otros lo usan también en .m3u).
         if (m3u8 || validUtf8(line)) p = fromUtf8(line);
@@ -688,8 +901,17 @@ int Library::importM3u(const std::wstring& file) {
         if (p.size() < 2 || (p[1] != L':' && p.rfind(L"\\\\", 0) != 0)) p = base + p;
         for (auto& c : p) if (c == L'/') c = L'\\';
         paths.push_back(p);
+        if (pending.valid) extMetas.push_back({p, pending});
+        pending = ExtElverMeta{};
     }
     auto added = addFiles(paths);
+    if (!extMetas.empty()) {
+        std::lock_guard<std::recursive_mutex> lk(m_);
+        for (const auto& [ep, em] : extMetas) {
+            if (LibTrack* lt = find(ep)) applyExtElverToTrack(*lt, em);
+        }
+        markDirty();
+    }
     std::wstring name = fileNameOf(file);
     name = name.substr(0, name.find_last_of(L'.'));
     const int idx = createPlaylist(toUtf8(name));

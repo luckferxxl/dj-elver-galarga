@@ -50,7 +50,8 @@ public:
     Library();
     ~Library();
     void load();
-    void save();                   // escribe si hay cambios
+    void save();
+    bool reloadExternalChanges();                   // escribe si hay cambios
     std::recursive_mutex& mutex() { return m_; }
 
     // Requieren mutex() tomado por el llamador si se usan desde la interfaz

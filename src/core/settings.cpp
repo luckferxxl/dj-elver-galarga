@@ -39,6 +39,12 @@ void Settings::load() {
         if (j.contains("smartLists")) for (auto& q : j["smartLists"]) smartLists.push_back({q.value("name", "Lista"), q.value("tag", ""), q.value("minBpm", 0.f), q.value("maxBpm", 250.f), q.value("unplayed", false), q.value("minRating", 0)});
         minBpm = j.value("minBpm", 70.0); maxBpm = j.value("maxBpm", 180.0);
         pitchRange[0] = j.value("pitchRangeA", 8.f); pitchRange[1] = j.value("pitchRangeB", 8.f);
+        pitchInvertUi = j.value("pitchInvertUi", false);
+        pitchOnLoadMode = std::clamp(j.value("pitchOnLoadMode", 0), 0, 2);
+        if (j.value("uiVer", 0) < 8) {
+            if (pitchRange[0] > 16.5f) pitchRange[0] = 8.f;
+            if (pitchRange[1] > 16.5f) pitchRange[1] = 8.f;
+        }
         quantize = j.value("quantize", true);
         xfCurve = j.value("xfCurve", 0);
         colorFx = std::clamp(j.value("colorFx", 0), 0, 3);
@@ -83,7 +89,8 @@ void Settings::load() {
 void Settings::save() const {
     json j;
     j["device"] = audio.deviceName; j["periodMs"] = audio.periodMs; j["sampleRate"] = audio.sampleRate;
-    j["uiVer"] = 7; j["theme"] = theme; j["keyNotation"] = keyNotation;
+    j["uiVer"] = 8; j["theme"] = theme; j["keyNotation"] = keyNotation;
+    j["pitchInvertUi"] = pitchInvertUi; j["pitchOnLoadMode"] = pitchOnLoadMode;
     j["automixFadeBeats"] = automixFadeBeats; j["automixSync"] = automixSync; j["automixRepeat"] = automixRepeat; j["exclusive"] = audio.exclusive;
     j["hpRouting"] = (int)audio.hpRouting; j["hpDevice"] = audio.hpDeviceName;
     j["recFolder"] = recFolder; j["recName"] = recName; j["recTracklist"] = recTracklist;
