@@ -1381,9 +1381,14 @@ void App::drawTrackList(ImVec2 a, ImVec2 b) {
                 ImDrawList* cdl = ImGui::GetWindowDrawList();
                 const float ty = c0.y + (rowH - fs) * 0.5f;
                 // Estado: plato cargado / número
-                int onDeck = -1;
-                for (int d = 0; d < kNumDecks; ++d) if (deck_[d].path == vr.path) onDeck = d;
-                if (onDeck >= 0 && !selected) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, col::withAlpha(col::deck(onDeck), engine_.deckStatus[onDeck].playing.load() ? 30 : 18));
+                const bool onA = (!deck_[0].path.empty() && deck_[0].path == vr.path);
+                const bool onB = (!deck_[1].path.empty() && deck_[1].path == vr.path);
+                int onDeck = onA ? 0 : (onB ? 1 : -1);
+                if (onDeck >= 0 && !selected) {
+                    const bool plNow = engine_.deckStatus[onDeck].playing.load();
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, col::withAlpha(col::deck(onDeck), plNow ? 62 : 36));
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, col::withAlpha(col::deck(onDeck), plNow ? 62 : 36));
+                }
                 const bool missing = !t || t->missing;
                 const bool played = today.count(vr.path) > 0;
                 if (auto ci=settings_.trackColors.find(toUtf8(vr.path)); ci!=settings_.trackColors.end() && ci->second>0) {
@@ -1413,8 +1418,12 @@ void App::drawTrackList(ImVec2 a, ImVec2 b) {
                         tx += art + 10 * s;
                     }
                     std::string nm = t ? t->title : vr.title;
+                    if (onA && onB) nm = "[DECK A+B] " + nm;
+                    else if (onA) nm = std::string(engine_.deckStatus[0].playing.load() ? "[DECK A ▶] " : "[DECK A] ") + nm;
+                    else if (onB) nm = std::string(engine_.deckStatus[1].playing.load() ? "[DECK B ▶] " : "[DECK B] ") + nm;
                     if (missing && t) nm += "  (no encontrado)";
-                    cdl->AddText(fontHead, fs * 1.02f, ImVec2(tx, ty - 1 * s), tcol, ellipsize(nm, p.x + cw - tx, fontHead, fs * 1.02f).c_str());
+                    const ImU32 titleColor = onDeck >= 0 ? col::deck(onDeck) : tcol;
+                    cdl->AddText(fontHead, fs * 1.02f, ImVec2(tx, ty - 1 * s), titleColor, ellipsize(nm, p.x + cw - tx, fontHead, fs * 1.02f).c_str());
                 }
                 ImGui::TableNextColumn();
                 if (t) {

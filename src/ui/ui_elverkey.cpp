@@ -382,6 +382,79 @@ void App::drawElverKeyContent() {
         ImGui::PopStyleColor();
     }
 
+    // Barra de estado en vivo de DECK A (Plato 1) y DECK B (Plato 2) con sus colores diferenciados
+    const std::wstring pathDeckA = deck_[0].path;
+    const std::wstring pathDeckB = deck_[1].path;
+    const bool playingDeckA = !pathDeckA.empty() && engine_.deckStatus[0].playing.load();
+    const bool playingDeckB = !pathDeckB.empty() && engine_.deckStatus[1].playing.load();
+    {
+        ImGui::Spacing();
+        const float stripW = ImGui::GetContentRegionAvail().x;
+        const float boxW = (stripW - 8 * s) * 0.5f;
+        for (int d = 0; d < 2; ++d) {
+            if (d == 1) ImGui::SameLine(0, 8 * s);
+            const std::wstring& dPath = (d == 0) ? pathDeckA : pathDeckB;
+            const bool dPlay = (d == 0) ? playingDeckA : playingDeckB;
+            const ImU32 dCol = (d == 0) ? col::DeckA : col::DeckB;
+            const LibTrack* dt = dPath.empty() ? nullptr : library_.find(dPath);
+            std::string badgeTxt = d == 0 ? (dPlay ? "DECK A ▶ SONANDO: " : "DECK A ⏸ CARGADO: ")
+                                          : (dPlay ? "DECK B ▶ SONANDO: " : "DECK B ⏸ CARGADO: ");
+            if (dt) {
+                badgeTxt += (dt->artist.empty() ? "" : dt->artist + " — ") + dt->title +
+                            "  [" + (dt->meta.key >= 0 ? std::string(keyCamelot(dt->meta.key)) : "—") +
+                            " · " + (dt->meta.bpm > 0 ? std::to_string((int)std::lround(engine_.effectiveBpm(d))) + " BPM" : "—") + "]";
+            } else if (!dPath.empty()) {
+                badgeTxt += deck_[d].title;
+            } else {
+                badgeTxt = d == 0 ? "DECK A: Sin pista cargada" : "DECK B: Sin pista cargada";
+            }
+            ImGui::PushID(d + 7700);
+            if (NeonButton(badgeTxt.c_str(), dCol, dPlay, ImVec2(boxW, 24 * s), !dPath.empty(), fontHead, 12 * s)) {
+                if (g_ek.activeTab == 1) {
+                    if (d == 0) g_ek.labPathA = dPath;
+                    else g_ek.labPathB = dPath;
+                } else {
+                    g_ek.refPath = dPath;
+                }
+            }
+            if (ImGui::IsItemHovered() && !dPath.empty()) {
+                ImGui::SetTooltip("Canción en %s (%s).\nClic: usar como referencia / pista en Mix Lab.",
+                                  d == 0 ? "DECK A (Plato 1)" : "DECK B (Plato 2)",
+                                  dPlay ? "sonando ahora" : "en pausa");
+            }
+            ImGui::PopID();
+        }
+    }
+
+    // Helper para resaltar y diferenciar en cualquier tabla la fila que está en DECK A vs DECK B
+    auto decorateDeckRow = [&](const std::wstring& rowPath, const std::string& baseTitle, ImU32& outTextCol) -> std::string {
+        const bool isA = (!pathDeckA.empty() && rowPath == pathDeckA);
+        const bool isB = (!pathDeckB.empty() && rowPath == pathDeckB);
+        if (isA && isB) {
+            const ImU32 bg = col::withAlpha(col::DeckA, (playingDeckA || playingDeckB) ? 78 : 46);
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, bg);
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, bg);
+            outTextCol = col::DeckA;
+            return std::string((playingDeckA || playingDeckB) ? "[DECK A+B ▶] " : "[DECK A+B] ") + baseTitle;
+        }
+        if (isA) {
+            const ImU32 bg = col::withAlpha(col::DeckA, playingDeckA ? 78 : 45);
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, bg);
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, bg);
+            outTextCol = col::DeckA;
+            return std::string(playingDeckA ? "[DECK A ▶] " : "[DECK A] ") + baseTitle;
+        }
+        if (isB) {
+            const ImU32 bg = col::withAlpha(col::DeckB, playingDeckB ? 78 : 45);
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, bg);
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, bg);
+            outTextCol = col::DeckB;
+            return std::string(playingDeckB ? "[DECK B ▶] " : "[DECK B] ") + baseTitle;
+        }
+        outTextCol = col::Text;
+        return baseTitle;
+    };
+
     ImGui::Separator();
 
     // Recopilar lista de estilos únicos presentes en la biblioteca
@@ -542,10 +615,26 @@ void App::drawElverKeyContent() {
                 if (sc < g_ek.minScore) continue;
                 g_ek.candidates.push_back(CandidateRow{cand.path, sc, hSc, rel, dPct, adjPct, countValidCues(cand.meta)});
             }
-            std::sort(g_ek.candidates.begin(), g_ek.candidates.end(), [](const CandidateRow& x, const CandidateRow& y) {
+            std::sort(g_ek.candidates.begin(), g_ek.candidates.end(), [&](const CandidateRow& x, const CandidateRow& y) {
+                const bool xDeck = (!pathDeckA.empty() && x.path == pathDeckA) || (!pathDeckB.empty() && x.path == pathDeckB);
+                const bool yDeck = (!pathDeckA.empty() && y.path == pathDeckA) || (!pathDeckB.empty() && y.path == pathDeckB);
+                if (xDeck != yDeck) return xDeck > yDeck;
                 if (x.score != y.score) return x.score > y.score;
                 return x.bpmDeltaPct < y.bpmDeltaPct;
             });
+            // Asegurar que las canciones cargadas en Deck A y Deck B aparezcan siempre al principio de la tabla para verlas diferenciadas
+            for (int d = 1; d >= 0; --d) {
+                const std::wstring& dp = (d == 0) ? pathDeckA : pathDeckB;
+                if (dp.empty()) continue;
+                const LibTrack* dt = library_.find(dp);
+                if (!dt) continue;
+                auto it = std::find_if(g_ek.candidates.begin(), g_ek.candidates.end(), [&](const CandidateRow& r) { return r.path == dp; });
+                int hSc = 100; std::string rel = (d == 0 ? "En DECK A" : "En DECK B"); double dPct = 0, adjPct = 0;
+                int sc = compatibilityScore(*refTrack, *dt, g_ek.allowHalfDouble, hSc, rel, dPct, adjPct);
+                CandidateRow row{dp, sc, hSc, (d == 0 ? (playingDeckA ? "▶ SONANDO EN DECK A" : "⏸ CARGADA EN DECK A") : (playingDeckB ? "▶ SONANDO EN DECK B" : "⏸ CARGADA EN DECK B")), dPct, adjPct, countValidCues(dt->meta)};
+                if (it != g_ek.candidates.end()) g_ek.candidates.erase(it);
+                g_ek.candidates.insert(g_ek.candidates.begin(), row);
+            }
         }
 
         const float availH = std::max(140 * s, ImGui::GetContentRegionAvail().y - 34 * s);
@@ -579,6 +668,10 @@ void App::drawElverKeyContent() {
                     }
                     wdl->AddCircleFilled(sc, (r1 - r0) * 0.48f, baseCol, 18);
                     if (kIdx == activeKey) wdl->AddCircle(sc, (r1 - r0) * 0.50f, col::Text, 18, 2.0f * s);
+                    const int keyDeckA = (!pathDeckA.empty() && deck_[0].meta.key >= 0) ? soundingKey(0) : -1;
+                    const int keyDeckB = (!pathDeckB.empty() && deck_[1].meta.key >= 0) ? soundingKey(1) : -1;
+                    if (kIdx == keyDeckA) wdl->AddCircle(sc, (r1 - r0) * 0.56f, col::DeckA, 18, 2.5f * s);
+                    if (kIdx == keyDeckB) wdl->AddCircle(sc, (r1 - r0) * 0.62f, col::DeckB, 18, 2.5f * s);
                     const char* code = keyCamelot(kIdx);
                     CenterText(wdl, ImVec2(sc.x - 12 * s, sc.y - 7 * s), ImVec2(sc.x + 12 * s, sc.y + 7 * s),
                                compat ? col::onColor(baseCol) : col::TextDim, code, fontHead, 10.5f * s);
@@ -692,7 +785,11 @@ void App::drawElverKeyContent() {
                 }
 
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(ct->title.c_str());
+                {
+                    ImU32 rowTCol = col::Text;
+                    const std::string decTitle = decorateDeckRow(cr.path, ct->title, rowTCol);
+                    ImGui::TextColored(toVec4(rowTCol), "%s", decTitle.c_str());
+                }
                 ImGui::TableNextColumn();
                 ImGui::TextDisabled("%s", ct->artist.c_str());
                 ImGui::TableNextColumn();
@@ -996,7 +1093,12 @@ void App::drawElverKeyContent() {
                         ImGui::Text("Arrastrando pareja A→B");
                         ImGui::EndDragDropSource();
                     }
-                    ImGui::TableNextColumn(); ImGui::TextUnformatted(cand.title.c_str());
+                    ImGui::TableNextColumn();
+                    {
+                        ImU32 rowTCol = col::Text;
+                        const std::string decTitle = decorateDeckRow(cand.path, cand.title, rowTCol);
+                        ImGui::TextColored(toVec4(rowTCol), "%s", decTitle.c_str());
+                    }
                     ImGui::TableNextColumn(); ImGui::TextDisabled("%s", cand.artist.c_str());
                     ImGui::TableNextColumn(); ImGui::TextColored(toVec4(col::DeckA), "%s", cand.genre.c_str());
                     ImGui::TableNextColumn(); ImGui::Text("%.1f · %s", cand.meta.bpm, cand.meta.key >= 0 ? keyCamelot(cand.meta.key) : "—");
@@ -1172,7 +1274,12 @@ void App::drawElverKeyContent() {
                     ImGui::Text("Arrastrando sesión generada (%zu temas)", g_ek.autoSetPaths.size());
                     ImGui::EndDragDropSource();
                 }
-                ImGui::TableNextColumn(); ImGui::TextUnformatted(t->title.c_str());
+                ImGui::TableNextColumn();
+                {
+                    ImU32 rowTCol = col::Text;
+                    const std::string decTitle = decorateDeckRow(t->path, t->title, rowTCol);
+                    ImGui::TextColored(toVec4(rowTCol), "%s", decTitle.c_str());
+                }
                 ImGui::TableNextColumn(); ImGui::TextDisabled("%s", t->artist.c_str());
                 ImGui::TableNextColumn(); ImGui::TextColored(toVec4(col::DeckA), "%s", t->genre.c_str());
                 ImGui::TableNextColumn(); ImGui::Text("%.1f · %s", t->meta.bpm, t->meta.key >= 0 ? keyCamelot(t->meta.key) : "—");
@@ -1287,8 +1394,18 @@ void App::drawElverKeyContent() {
                     const MixIdeaItem& item = g_ek.ideas[i];
                     ImGui::PushID((int)i);
                     ImGui::TableNextRow();
-                    ImGui::TableNextColumn(); ImGui::TextUnformatted(item.titleA.c_str());
-                    ImGui::TableNextColumn(); ImGui::TextUnformatted(item.titleB.c_str());
+                    ImGui::TableNextColumn();
+                    {
+                        ImU32 cA = col::Text;
+                        std::string dA = decorateDeckRow(item.pathA, item.titleA, cA);
+                        ImGui::TextColored(toVec4(cA), "%s", dA.c_str());
+                    }
+                    ImGui::TableNextColumn();
+                    {
+                        ImU32 cB = col::Text;
+                        std::string dB = decorateDeckRow(item.pathB, item.titleB, cB);
+                        ImGui::TextColored(toVec4(cB), "%s", dB.c_str());
+                    }
                     ImGui::TableNextColumn(); ImGui::Text("%s→%s", formatTime(item.exitSec, false).c_str(), formatTime(item.entrySec, false).c_str());
                     ImGui::TableNextColumn(); ImGui::TextDisabled("%s", item.note.c_str());
                     ImGui::TableNextColumn();
