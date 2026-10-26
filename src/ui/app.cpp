@@ -113,6 +113,7 @@ void App::applyAudioConfig() {
     audio_.refreshDevices();
     settings_.audio = pendingAudio_;
     audio_.open(engine_, settings_.audio);
+    settings_.save();
     const AudioState& s = audio_.state();
     if (!s.running) notify("No hay salida de audio: " + s.message, true);
     else if (!s.message.empty()) notify(s.message, s.simulated);

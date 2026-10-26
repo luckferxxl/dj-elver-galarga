@@ -27,8 +27,13 @@ void Settings::load() {
         automixSync = j.value("automixSync", true);
         automixRepeat = j.value("automixRepeat", false);
         audio.exclusive = j.value("exclusive", false);
-        audio.hpRouting = (HpRouting)j.value("hpRouting", 0);
+        audio.hpRouting = (HpRouting)j.value("hpRouting", 1);
         audio.hpDeviceName = j.value("hpDevice", "");
+        audio.outMode = std::clamp(j.value("audioOutMode", 1), 0, 2);
+        audio.hwMode  = std::clamp(j.value("audioHwMode", 0), 0, 2);
+        audio.spkChan = std::clamp(j.value("audioSpkChan", 0), 0, 5);
+        audio.hpChan  = std::clamp(j.value("audioHpChan", 1), 0, 5);
+        audio.configProfile = j.value("audioProfile", "config 1");
         recFormat = j.value("recFormat", 0);
         recFolder = j.value("recFolder", ""); recName = j.value("recName", "Mezcla"); recTracklist = j.value("recTracklist", true);
         decksCollapsed = j.value("decksCollapsed", false); showPerformance = j.value("showPerformance", true);
@@ -49,6 +54,14 @@ void Settings::load() {
         xfCurve = j.value("xfCurve", 0);
         colorFx = std::clamp(j.value("colorFx", 0), 0, 3);
         masterVol = j.value("masterVol", 0.8f); hpVol = j.value("hpVol", 0.7f); hpMix = j.value("hpMix", 0.f);
+        if (j.value("uiVer", 0) < 9) {
+            // Corregir hpMix=1.0 antiguo que silenciaba la preescucha CUE y activar preescucha chan 1&2 + chan 3&4 por defecto
+            if (hpMix > 0.5f) hpMix = 0.0f;
+            audio.outMode = 1;
+            audio.spkChan = 0;
+            audio.hpChan = 1;
+            if (audio.hpRouting == HpRouting::Ninguna) audio.hpRouting = HpRouting::Canales34;
+        }
         libraryHeight = j.value("libraryHeight", 0.f);
         winW = j.value("winW", 1440); winH = j.value("winH", 900); maximized = j.value("maximized", false);
         waveZoomSec = j.value("waveZoomSec", 8.f);
@@ -89,10 +102,13 @@ void Settings::load() {
 void Settings::save() const {
     json j;
     j["device"] = audio.deviceName; j["periodMs"] = audio.periodMs; j["sampleRate"] = audio.sampleRate;
-    j["uiVer"] = 8; j["theme"] = theme; j["keyNotation"] = keyNotation;
+    j["uiVer"] = 9; j["theme"] = theme; j["keyNotation"] = keyNotation;
     j["pitchInvertUi"] = pitchInvertUi; j["pitchOnLoadMode"] = pitchOnLoadMode;
     j["automixFadeBeats"] = automixFadeBeats; j["automixSync"] = automixSync; j["automixRepeat"] = automixRepeat; j["exclusive"] = audio.exclusive;
     j["hpRouting"] = (int)audio.hpRouting; j["hpDevice"] = audio.hpDeviceName;
+    j["audioOutMode"] = audio.outMode; j["audioHwMode"] = audio.hwMode;
+    j["audioSpkChan"] = audio.spkChan; j["audioHpChan"] = audio.hpChan;
+    j["audioProfile"] = audio.configProfile;
     j["recFolder"] = recFolder; j["recName"] = recName; j["recTracklist"] = recTracklist;
     j["decksCollapsed"] = decksCollapsed; j["showPerformance"] = showPerformance; j["deckHeight"] = deckHeight;
     j["mouseScratchSensitivity"] = mouseScratchSensitivity;

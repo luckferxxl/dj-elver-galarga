@@ -580,13 +580,18 @@ void App::drawTopBar(float h) {
         ImGui::SetItemTooltip("Abrir/cerrar la ventana interna ELVERKEY / MIX LAB (rueda armónica, banco A→B, auto-set y colores).\nClic derecho: fijar como vista acoplada arriba.");
     }
 
-    // Auriculares (preescucha)
+    // Auriculares (preescucha y configuración de audio estilo VirtualDJ)
     {
-        rx -= 38 * s + 8 * s;
+        const float hbw = 96 * s;
+        rx -= hbw + 8 * s;
         ImGui::SetCursorScreenPos(ImVec2(rx, by));
         const bool pfl = engine_.deck[0].pfl.load() || engine_.deck[1].pfl.load();
-        if (IconButton("##auriculares", Ic::Headphones, ImVec2(38 * s, bh), col::Amber, pfl, true, 0.56f)) ImGui::OpenPopup("auriculares");
-        ImGui::SetItemTooltip("Auriculares: volumen, mezcla y preescucha");
+        if (IconTextButton("##auriculares", Ic::Headphones, "AUDIO", col::Amber, pfl || showAudio_, ImVec2(hbw, bh), true, fontHead, 12.5f * s)) {
+            showAudio_ = !showAudio_;
+            if (showAudio_) { pendingAudio_ = settings_.audio; audio_.refreshDevices(); }
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("auriculares");
+        ImGui::SetItemTooltip("Clic izquierdo: abrir CONFIGURACIÓN DE AUDIO (Altavoces chan 1&2 + Audífonos chan 3&4)\nClic derecho: ajuste rápido de volumen de cascos y CUE A / CUE B");
         if (ImGui::BeginPopup("auriculares")) {
             ImGui::PushFont(fontHead, 15.f);
             ImGui::TextUnformatted("AURICULARES");
@@ -1077,6 +1082,23 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
             float bx0 = tx + ew + 10 * s + fontHead->CalcTextSizeA(16 * s, FLT_MAX, 0, rem.c_str()).x + 12 * s;
             // Chips de estado a la derecha. El primero (0.11.3): el botón de efectos del plato.
             float chx = drawDeckFxButton(d, ix1, ty + 3 * s, 18 * s, std::max(40 * s, ix1 - bx0 - 4 * s), ix1 - bx0 - 116 * s);
+            // Chip rápido "🎧 CUE" (preescucha en cascos de este plato)
+            if (chx - bx0 > 195 * s) {
+                const bool pflOn = p.pfl.load();
+                const char* cueChipTxt = pflOn ? "🎧 CUE ON" : "🎧 CUE";
+                const float cw2 = BadgeWidth(18 * s, cueChipTxt, fontHead, 11.5f * s);
+                chx -= cw2;
+                const ImVec2 cp2(chx, ty + 3 * s);
+                Badge(dl, cp2, 18 * s, cueChipTxt, col::Amber, pflOn, fontHead, 11.5f * s);
+                ImGui::SetCursorScreenPos(cp2);
+                char cbid[24]; std::snprintf(cbid, sizeof cbid, "##cuechip%d", d);
+                if (ImGui::InvisibleButton(cbid, ImVec2(cw2, 18 * s))) p.pfl = !pflOn;
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                    showAudio_ = true; pendingAudio_ = settings_.audio; audio_.refreshDevices();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Preescucha por cascos (PFL / CUE) de este plato (suena en Audífonos chan 3&4 aunque el fader esté bajado)\nClic derecho: abrir Configuración de Audio");
+                chx -= 4 * s;
+            }
             // Chip rápido "🎛 STEMS" en la cabecera del plato
             if (chx - bx0 > 140 * s) {
                 const bool stemChanged = p.stemMute[0].load() || p.stemMute[1].load() || p.stemMute[2].load() || p.stemMute[3].load();
@@ -2250,82 +2272,470 @@ void App::drawConfirmLoad() {
 void App::drawAudioDialog() {
     const float s = S();
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(600 * s, 0), ImGuiCond_Appearing);
-    if (!ImGui::Begin("Configuración de audio", &showAudio_, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) { ImGui::End(); return; }
+    ImGui::SetNextWindowSize(ImVec2(980 * s, 620 * s), ImGuiCond_Appearing);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.18f, 0.18f, 0.19f, 1.0f));
+    if (!ImGui::Begin("CONFIGURACIÓN DE AUDIO", &showAudio_, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::PopStyleColor();
+        ImGui::End();
+        return;
+    }
+
     const auto& devs = audio_.devices();
-    auto deviceCombo = [&](const char* label, std::string& name, bool allowDefault) {
-        const std::string preview = name.empty() ? std::string("Predeterminado del sistema") : name;
-        if (ImGui::BeginCombo(label, preview.c_str())) {
-            if (allowDefault && ImGui::Selectable("Predeterminado del sistema", name.empty())) name.clear();
-            for (auto& d : devs) {
-                char l[300];
-                std::snprintf(l, sizeof l, "%s%s  (%d canales)", d.name.c_str(), d.isDefault ? " · predeterminado" : "", d.maxChannels);
-                if (ImGui::Selectable(l, name == d.name)) name = d.name;
+    std::string defDevName;
+    for (const auto& d : devs) if (d.isDefault) { defDevName = d.name; break; }
+    if (defDevName.empty() && !devs.empty()) defDevName = devs[0].name;
+
+    // Formatear etiqueta estilo VirtualDJ: "WH201A (WASAPI)" o "<Nombre> (WASAPI)"
+    auto formatWasapiLabel = [&](const std::string& rawName) -> std::string {
+        std::string n = rawName.empty() ? defDevName : rawName;
+        if (n.empty()) return "Predeterminado (WASAPI)";
+        // Si tiene paréntesis tipo "Auriculares (WH201A)", destacar WH201A (WASAPI)
+        const size_t p1 = n.find('('), p2 = n.find(')', p1 == std::string::npos ? 0 : p1);
+        if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
+            std::string inner = n.substr(p1 + 1, p2 - p1 - 1);
+            if (inner.find("Realtek") == std::string::npos && inner.size() <= 16) {
+                return inner + " (WASAPI)  ·  " + n;
+            }
+        }
+        return n + " (WASAPI)";
+    };
+
+    const ImU32 vdjBlue      = IM_COL32(83, 118, 155, 255);
+    const ImU32 vdjBlueHover = IM_COL32(98, 136, 176, 255);
+    const ImU32 vdjDarkBox   = IM_COL32(28, 28, 30, 255);
+    const ImU32 vdjBtnGray   = IM_COL32(62, 62, 66, 255);
+    const ImU32 vdjBtnHover  = IM_COL32(78, 78, 84, 255);
+    const ImU32 vdjBorder    = IM_COL32(95, 95, 100, 255);
+
+    auto vdjCardBtn = [&](const char* id, const char* iconTxt, const char* line1, const char* line2, bool active, ImVec2 sz) -> bool {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 p1(p0.x + sz.x, p0.y + sz.y);
+        const bool clicked = ImGui::InvisibleButton(id, sz);
+        const bool hov = ImGui::IsItemHovered();
+        const ImU32 bg = active ? (hov ? vdjBlueHover : vdjBlue) : (hov ? vdjBtnHover : vdjBtnGray);
+        dl->AddRectFilled(p0, p1, bg, 2.f * s);
+        dl->AddRect(p0, p1, active ? IM_COL32(140, 180, 225, 255) : vdjBorder, 2.f * s, 0, 1.f * s);
+        // Icono a la izquierda
+        dl->AddText(fontHead, 18 * s, ImVec2(p0.x + 12 * s, p0.y + (sz.y - 18 * s) * 0.5f), IM_COL32(240, 240, 245, 255), iconTxt);
+        const float tx0 = p0.x + 42 * s;
+        if (line2 && line2[0]) {
+            CenterText(dl, ImVec2(tx0, p0.y + 4 * s), ImVec2(p1.x - 6 * s, p0.y + sz.y * 0.52f), IM_COL32(245, 245, 245, 255), line1, fontHead, 12.f * s);
+            CenterText(dl, ImVec2(tx0, p0.y + sz.y * 0.48f), ImVec2(p1.x - 6 * s, p1.y - 4 * s), IM_COL32(245, 245, 245, 255), line2, fontHead, 12.f * s);
+        } else {
+            CenterText(dl, ImVec2(tx0, p0.y), ImVec2(p1.x - 6 * s, p1.y), IM_COL32(245, 245, 245, 255), line1, fontHead, 12.5f * s);
+        }
+        return clicked;
+    };
+
+    const float totalH = ImGui::GetContentRegionAvail().y;
+    // ---- Columna lateral izquierda (como en VirtualDJ)
+    ImGui::BeginChild("vdj_left_nav", ImVec2(98 * s, totalH), ImGuiChildFlags_None);
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 wp = ImGui::GetWindowPos();
+        const ImVec2 ws = ImGui::GetWindowSize();
+        dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(40, 40, 43, 255));
+        dl->AddLine(ImVec2(wp.x + ws.x - 1, wp.y), ImVec2(wp.x + ws.x - 1, wp.y + ws.y), IM_COL32(25, 25, 27, 255));
+        struct NavItem { const char* icon; const char* lbl; int act; };
+        const NavItem navs[] = {
+            {"🎓", "TUTORIALES", 0},
+            {"🔊", "AUDIO", 1},
+            {"🖥", "CARÁTULA", 2},
+            {"🎚", "CONTROLADORE", 3},
+            {"⚙", "OPCIONES", 4},
+            {"🎧", "STEMS / IA", 5},
+            {"🧪", "MIX LAB", 6},
+            {"📁", "GRABACIONES", 7},
+        };
+        for (int i = 0; i < 8; ++i) {
+            const ImVec2 np = ImGui::GetCursorScreenPos();
+            const ImVec2 nsz(96 * s, 54 * s);
+            char nid[24]; std::snprintf(nid, sizeof nid, "##vnav%d", i);
+            if (ImGui::InvisibleButton(nid, nsz)) {
+                if (navs[i].act == 3) { showMidi_ = true; }
+                else if (navs[i].act == 4) { showLibraryTools_ = true; }
+                else if (navs[i].act == 5) { mode_ = 1; showAudio_ = false; }
+                else if (navs[i].act == 6) { mode_ = 3; showAudio_ = false; }
+                else if (navs[i].act == 7) { showRecording_ = true; }
+            }
+            const bool active = (i == 1);
+            if (active || ImGui::IsItemHovered()) {
+                dl->AddRectFilled(np, ImVec2(np.x + nsz.x, np.y + nsz.y), active ? IM_COL32(26, 26, 28, 255) : IM_COL32(52, 52, 56, 255));
+            }
+            CenterText(dl, ImVec2(np.x, np.y + 6 * s), ImVec2(np.x + nsz.x, np.y + 30 * s), IM_COL32(225, 225, 230, 255), navs[i].icon, fontHead, 18 * s);
+            CenterText(dl, ImVec2(np.x, np.y + 32 * s), ImVec2(np.x + nsz.x, np.y + 50 * s), active ? IM_COL32(255, 255, 255, 255) : IM_COL32(180, 180, 185, 255), navs[i].lbl, fontHead, 10.f * s);
+        }
+        ImGui::SetCursorPosY(totalH - 22 * s);
+        ImGui::TextDisabled(" v0.14.0 Pro");
+    }
+    ImGui::EndChild();
+    ImGui::SameLine(0, 12 * s);
+
+    // ---- Panel principal derecho
+    ImGui::BeginChild("vdj_audio_main", ImVec2(0, totalH), ImGuiChildFlags_None);
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const float mw = ImGui::GetContentRegionAvail().x;
+
+        // Tres bloques superiores: SALIDAS | HARDWARE | ENTRADAS
+        const float colSalW = 196 * s;
+        const float colEntW = 196 * s;
+        const float colHwW  = std::max(320 * s, mw - colSalW - colEntW - 20 * s);
+        const float boxH    = 170 * s;
+        const float tabH    = 22 * s;
+        const ImVec2 topPos = ImGui::GetCursorScreenPos();
+
+        auto drawSectionBox = [&](float x0, float wBox, const char* title) {
+            dl->AddRectFilled(ImVec2(x0 + 8 * s, topPos.y), ImVec2(x0 + 115 * s, topPos.y + tabH), vdjDarkBox, 2.f * s);
+            CenterText(dl, ImVec2(x0 + 8 * s, topPos.y), ImVec2(x0 + 115 * s, topPos.y + tabH), IM_COL32(235, 235, 240, 255), title, fontHead, 11.5f * s);
+            dl->AddRectFilled(ImVec2(x0, topPos.y + tabH), ImVec2(x0 + wBox, topPos.y + tabH + boxH), vdjDarkBox, 2.f * s);
+        };
+
+        // 1. SALIDAS
+        drawSectionBox(topPos.x, colSalW, "SALIDAS");
+        const float btnH = 44 * s;
+        const float pad  = 10 * s;
+        ImGui::SetCursorScreenPos(ImVec2(topPos.x + pad, topPos.y + tabH + 10 * s));
+        if (vdjCardBtn("##sal_solo", "🔊", "SOLO ALTAVOCES", "", pendingAudio_.outMode == 0, ImVec2(colSalW - 2 * pad, btnH))) {
+            pendingAudio_.outMode = 0;
+            pendingAudio_.hpRouting = HpRouting::Ninguna;
+            applyAudioConfig();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(topPos.x + pad, topPos.y + tabH + 10 * s + btnH + 8 * s));
+        if (vdjCardBtn("##sal_hp", "🎧", "ALTAVOCES +", "AUDIFONOS", pendingAudio_.outMode == 1, ImVec2(colSalW - 2 * pad, btnH))) {
+            pendingAudio_.outMode = 1;
+            pendingAudio_.spkChan = 0;
+            pendingAudio_.hpChan  = 1;
+            pendingAudio_.hpRouting = HpRouting::Canales34;
+            if (engine_.mixer.hpMix.load() > 0.5f) { engine_.mixer.hpMix = 0.0f; settings_.hpMix = 0.0f; }
+            applyAudioConfig();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(topPos.x + pad, topPos.y + tabH + 10 * s + (btnH + 8 * s) * 2));
+        if (vdjCardBtn("##sal_decks", "🎚", "DECKS", "SEPARADOS", pendingAudio_.outMode == 2, ImVec2(colSalW - 2 * pad, btnH))) {
+            pendingAudio_.outMode = 2;
+            pendingAudio_.spkChan = 0;
+            pendingAudio_.hpChan  = 1;
+            pendingAudio_.hpRouting = HpRouting::DecksSeparados;
+            applyAudioConfig();
+        }
+
+        // 2. HARDWARE
+        const float hwX = topPos.x + colSalW + 10 * s;
+        drawSectionBox(hwX, colHwW, "HARDWARE");
+        const float hwBtnW = (colHwW - 3 * pad) * 0.5f;
+        ImGui::SetCursorScreenPos(ImVec2(hwX + pad, topPos.y + tabH + 10 * s));
+        if (vdjCardBtn("##hw_int", "💻", "AUDIO", "INTERCONSTRUIDO", pendingAudio_.hwMode == 0, ImVec2(hwBtnW, btnH))) {
+            pendingAudio_.hwMode = 0;
+            if (pendingAudio_.outMode == 1) {
+                pendingAudio_.spkChan = 0;
+                pendingAudio_.hpChan  = 1;
+                pendingAudio_.hpRouting = HpRouting::Canales34;
+            }
+            applyAudioConfig();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(hwX + 2 * pad + hwBtnW, topPos.y + tabH + 10 * s));
+        if (vdjCardBtn("##hw_usb", "🎛", "TARJETA(S) DE AUDIO", "USB", pendingAudio_.hwMode == 1, ImVec2(hwBtnW, btnH))) {
+            pendingAudio_.hwMode = 1;
+            if (pendingAudio_.outMode == 1) {
+                pendingAudio_.spkChan = 0;
+                pendingAudio_.hpChan  = 1;
+                // Si hay 2 dispositivos distintos en el PC (ej. Altavoces Realtek + Auriculares WH201A), ofrecer/configurar ambos
+                if (devs.size() >= 2 && pendingAudio_.hpDeviceName.empty()) {
+                    for (const auto& d : devs) {
+                        if (d.name != pendingAudio_.deviceName) { pendingAudio_.hpDeviceName = d.name; break; }
+                    }
+                }
+            }
+            applyAudioConfig();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(hwX + pad, topPos.y + tabH + 10 * s + btnH + 8 * s));
+        if (vdjCardBtn("##hw_ysplit", "🔀", "DIVISOR EN \"Y\" DE", "ESTEREO A MONOAURAL", pendingAudio_.hwMode == 2, ImVec2(hwBtnW, btnH))) {
+            pendingAudio_.hwMode = 2;
+            pendingAudio_.outMode = 1;
+            pendingAudio_.spkChan = 4; // chan 1 (Mono L)
+            pendingAudio_.hpChan  = 5; // chan 2 (Mono R)
+            pendingAudio_.hpRouting = HpRouting::DivisionMono;
+            applyAudioConfig();
+        }
+        // Botón adicional útil en el hueco inferior derecho de HARDWARE: Separar en 2 dispositivos del PC si existen
+        if (devs.size() >= 2) {
+            ImGui::SetCursorScreenPos(ImVec2(hwX + 2 * pad + hwBtnW, topPos.y + tabH + 10 * s + btnH + 8 * s));
+            const bool twoCards = !pendingAudio_.hpDeviceName.empty() && pendingAudio_.hpDeviceName != (pendingAudio_.deviceName.empty() ? defDevName : pendingAudio_.deviceName);
+            if (vdjCardBtn("##hw_2cards", "🔊+🎧", "2 DISPOSITIVOS PC", "(ALTAVOCES + CASCOS)", twoCards, ImVec2(hwBtnW, btnH))) {
+                pendingAudio_.outMode = 1;
+                pendingAudio_.hwMode = 0;
+                pendingAudio_.spkChan = 0;
+                pendingAudio_.hpChan  = 0;
+                // Buscar Realtek / Altavoces para Salida 1 y WH201A / Auriculares para Salida 2
+                for (const auto& d : devs) {
+                    if (d.name.find("Altavoces") != std::string::npos || d.name.find("Speakers") != std::string::npos) pendingAudio_.deviceName = d.name;
+                    else if (d.name.find("Auriculares") != std::string::npos || d.name.find("Headphones") != std::string::npos || d.name.find("WH201A") != std::string::npos) pendingAudio_.hpDeviceName = d.name;
+                }
+                if (pendingAudio_.hpDeviceName.empty() || pendingAudio_.hpDeviceName == pendingAudio_.deviceName) {
+                    pendingAudio_.deviceName = devs[0].name;
+                    pendingAudio_.hpDeviceName = devs[1].name;
+                }
+                pendingAudio_.hpRouting = HpRouting::DispositivoAparte;
+                applyAudioConfig();
+            }
+        }
+
+        // 3. ENTRADAS
+        const float entX = hwX + colHwW + 10 * s;
+        drawSectionBox(entX, colEntW, "ENTRADAS");
+        static bool micOn = false, tcOn = false, lineOn = false;
+        ImGui::SetCursorScreenPos(ImVec2(entX + pad, topPos.y + tabH + 10 * s));
+        if (vdjCardBtn("##ent_mic", "🎤", "MICRÓFONO", "", micOn, ImVec2(colEntW - 2 * pad, btnH))) micOn = !micOn;
+        ImGui::SetCursorScreenPos(ImVec2(entX + pad, topPos.y + tabH + 10 * s + btnH + 8 * s));
+        if (vdjCardBtn("##ent_tc", "💿", "CÓDIGO DE TIEMPO", "", tcOn, ImVec2(colEntW - 2 * pad, btnH))) tcOn = !tcOn;
+        ImGui::SetCursorScreenPos(ImVec2(entX + pad, topPos.y + tabH + 10 * s + (btnH + 8 * s) * 2));
+        if (vdjCardBtn("##ent_line", "🔌", "ENTRADA DE LÍNEA", "", lineOn, ImVec2(colEntW - 2 * pad, btnH))) lineOn = !lineOn;
+
+        // ---- Tabla central: "Salidas" (idéntica a la captura de VirtualDJ)
+        float y = topPos.y + tabH + boxH + 18 * s;
+        ImGui::SetCursorScreenPos(ImVec2(topPos.x, y));
+        ImGui::TextColored(ImVec4(0.88f, 0.88f, 0.90f, 1.f), "Salidas");
+        ImGui::SameLine(mw - 175 * s);
+        if (ImGui::SmallButton("🔄 Actualizar dispositivos")) audio_.refreshDevices();
+        y += 24 * s;
+
+        const char* chanLabels[6] = {
+            "chan 1 & 2",
+            "chan 3 & 4",
+            "chan 5 & 6",
+            "chan 7 & 8",
+            "chan 1 (Mono L)",
+            "chan 2 (Mono R)"
+        };
+
+        const float roleW = 128 * s;
+        const float devW  = std::max(240 * s, mw - roleW - 165 * s - 135 * s - 65 * s);
+        const float chW   = 155 * s;
+        const float apW   = 78 * s;
+        const float prW   = 52 * s;
+        const float rowH  = 28 * s;
+
+        // Asegurar que deviceName y hpDeviceName muestren el dispositivo real como en VirtualDJ
+        std::string curSpkDev = pendingAudio_.deviceName.empty() ? defDevName : pendingAudio_.deviceName;
+        std::string curHpDev  = pendingAudio_.hpDeviceName.empty() ? curSpkDev : pendingAudio_.hpDeviceName;
+
+        // Fila 1: Altavoces (o Deck 1)
+        ImGui::SetCursorScreenPos(ImVec2(topPos.x, y));
+        ImGui::SetNextItemWidth(roleW);
+        const char* row1Role = pendingAudio_.outMode == 2 ? "Deck 1" : "Altavoces";
+        if (ImGui::BeginCombo("##role1", row1Role)) {
+            if (ImGui::Selectable("Altavoces", pendingAudio_.outMode != 2)) pendingAudio_.outMode = 1;
+            if (ImGui::Selectable("Deck 1", pendingAudio_.outMode == 2)) pendingAudio_.outMode = 2;
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine(0, 4 * s);
+        ImGui::SetNextItemWidth(devW);
+        const std::string spkPreview = formatWasapiLabel(curSpkDev);
+        if (ImGui::BeginCombo("##dev1", spkPreview.c_str())) {
+            for (const auto& d : devs) {
+                const std::string lbl = formatWasapiLabel(d.name);
+                if (ImGui::Selectable(lbl.c_str(), curSpkDev == d.name)) {
+                    pendingAudio_.deviceName = d.name;
+                    if (pendingAudio_.hpDeviceName.empty()) pendingAudio_.hpDeviceName = d.name;
+                    applyAudioConfig();
+                }
             }
             ImGui::EndCombo();
         }
-    };
-    ImGui::SeparatorText("Salida principal (master)");
-    ImGui::SetNextItemWidth(380 * s);
-    deviceCombo("Dispositivo", pendingAudio_.deviceName, true);
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Actualizar")) audio_.refreshDevices();
-    const int periods[] = {3, 5, 10, 20, 40};
-    int pi = 2;
-    for (int i = 0; i < 5; ++i) if (pendingAudio_.periodMs == periods[i]) pi = i;
-    ImGui::SetNextItemWidth(170 * s);
-    const char* pn[] = {"3 ms", "5 ms", "10 ms (recomendado)", "20 ms", "40 ms (seguro)"};
-    if (ImGui::Combo("Tamaño de búfer", &pi, pn, 5)) pendingAudio_.periodMs = periods[pi];
-    ImGui::SetItemTooltip("Menos milisegundos = menos latencia pero más riesgo de cortes");
-    {
-        const int rates[] = {0, 44100, 48000, 88200, 96000};
-        const char* rn[] = {"La del dispositivo (recomendado)", "44 100 Hz", "48 000 Hz", "88 200 Hz", "96 000 Hz"};
-        int ri = 0;
-        for (int i = 0; i < 5; ++i) if (pendingAudio_.sampleRate == rates[i]) ri = i;
-        ImGui::SetNextItemWidth(250 * s);
-        if (ImGui::Combo("Frecuencia de muestreo", &ri, rn, 5)) pendingAudio_.sampleRate = rates[ri];
-        ImGui::SetItemTooltip("Si el dispositivo trabaja a otra frecuencia, se convierte (más CPU y algo de latencia)");
-    }
-    ImGui::Checkbox("Modo exclusivo WASAPI (menor latencia; bloquea el dispositivo para otras apps)", &pendingAudio_.exclusive);
-
-    ImGui::SeparatorText("Auriculares (preescucha)");
-    int maxCh = 2;
-    for (auto& d : devs) if ((pendingAudio_.deviceName.empty() && d.isDefault) || d.name == pendingAudio_.deviceName) maxCh = d.maxChannels;
-    const char* modes[] = {"Desactivada", "Canales 3-4 del mismo dispositivo", "Otro dispositivo de salida", "División mono (izq. = preescucha, der. = master)"};
-    int mode = (int)pendingAudio_.hpRouting;
-    ImGui::SetNextItemWidth(380 * s);
-    if (ImGui::BeginCombo("Modo", modes[mode])) {
-        for (int i = 0; i < 4; ++i) {
-            const bool enabled = i != 1 || maxCh >= 4;
-            if (!enabled) ImGui::BeginDisabled();
-            if (ImGui::Selectable(modes[i], mode == i)) mode = i;
-            if (!enabled) { ImGui::EndDisabled(); ImGui::SetItemTooltip("El dispositivo seleccionado solo tiene %d canales", maxCh); }
+        ImGui::SameLine(0, 4 * s);
+        ImGui::SetNextItemWidth(chW);
+        pendingAudio_.spkChan = std::clamp(pendingAudio_.spkChan, 0, 5);
+        if (ImGui::BeginCombo("##chan1", chanLabels[pendingAudio_.spkChan])) {
+            for (int c = 0; c < 6; ++c) {
+                if (ImGui::Selectable(chanLabels[c], pendingAudio_.spkChan == c)) {
+                    pendingAudio_.spkChan = c;
+                    applyAudioConfig();
+                }
+            }
+            ImGui::EndCombo();
         }
-        ImGui::EndCombo();
-    }
-    pendingAudio_.hpRouting = (HpRouting)mode;
-    if (pendingAudio_.hpRouting == HpRouting::DispositivoAparte) {
-        ImGui::SetNextItemWidth(380 * s);
-        deviceCombo("Dispositivo de auriculares", pendingAudio_.hpDeviceName, false);
-        ImGui::TextDisabled("Dos dispositivos tienen relojes distintos: la preescucha puede tener\nmicrocortes ocasionales (el master no se ve afectado).");
-    } else if (pendingAudio_.hpRouting == HpRouting::DivisionMono) {
-        ImGui::TextDisabled("Para auriculares en una salida estéreo: el master también sale\npor esta salida (en mono, canal derecho).");
-    }
-    ImGui::TextDisabled("Con un mando con tarjeta de sonido de 4 salidas (como el DDJ-WeGO), elige el\nmando como dispositivo y «Canales 3-4» para los auriculares.");
-    ImGui::Spacing();
-    if (NeonButton("Aplicar", col::Green, false, ImVec2(120 * s, 28 * s))) applyAudioConfig();
-    ImGui::SameLine();
-    if (NeonButton("Cerrar", col::Violet, false, ImVec2(120 * s, 28 * s))) showAudio_ = false;
+        ImGui::SameLine(0, 4 * s);
+        if (ImGui::Button("Aplicar##ap1", ImVec2(apW, rowH - 2 * s))) applyAudioConfig();
+        ImGui::SameLine(0, 4 * s);
+        if (ImGui::Button("🔊##test1", ImVec2(prW, rowH - 2 * s))) {
+            engine_.mixer.testToneTarget = 1;
+            engine_.mixer.testToneFrames = (int)(engine_.sampleRate() * 0.65);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Probar sonido en Altavoces (%s · %s)", spkPreview.c_str(), chanLabels[pendingAudio_.spkChan]);
+        ImGui::SameLine(0, 4 * s);
+        if (ImGui::Button("×##del1", ImVec2(24 * s, rowH - 2 * s))) {
+            pendingAudio_.deviceName.clear();
+            applyAudioConfig();
+        }
 
-    ImGui::SeparatorText("Estado actual");
-    const AudioState& st = audio_.state();
-    ImGui::Text("Sistema: %s · %s", st.backend.c_str(), st.deviceName.c_str());
-    ImGui::Text("%u Hz · %d canales · búfer %d fotogramas (%.1f ms)%s", st.sampleRate, st.channels, st.periodFrames,
-                st.sampleRate ? 1000.0 * st.periodFrames / st.sampleRate : 0.0, st.exclusive ? " · exclusivo" : "");
-    const char* hpTxt[] = {"desactivada", "canales 3-4", "otro dispositivo", "división mono"};
-    ImGui::Text("Preescucha: %s%s%s", hpTxt[(int)st.hpRouting], st.hpDeviceName.empty() ? "" : " → ", st.hpDeviceName.c_str());
-    if (!st.message.empty()) ImGui::TextColored(toVec4(col::Amber), "%s", st.message.c_str());
-    ImGui::TextDisabled("ASIO no está disponible en esta versión (ver LEEME).");
+        // Botón "⇅" a la derecha entre fila 1 y fila 2 (intercambiar Altavoces y Audífonos)
+        if (pendingAudio_.outMode != 0) {
+            ImGui::SameLine(0, 6 * s);
+            if (ImGui::Button("⇅##swap_rows", ImVec2(28 * s, rowH - 2 * s))) {
+                std::swap(pendingAudio_.deviceName, pendingAudio_.hpDeviceName);
+                std::swap(pendingAudio_.spkChan, pendingAudio_.hpChan);
+                applyAudioConfig();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Intercambiar canales / dispositivos entre Altavoces y Audífonos");
+        }
+
+        y += rowH + 4 * s;
+
+        // Fila 2: Audífonos (o Deck 2)
+        if (pendingAudio_.outMode != 0) {
+            ImGui::SetCursorScreenPos(ImVec2(topPos.x, y));
+            ImGui::SetNextItemWidth(roleW);
+            const char* row2Role = pendingAudio_.outMode == 2 ? "Deck 2" : "Audífonos";
+            if (ImGui::BeginCombo("##role2", row2Role)) {
+                if (ImGui::Selectable("Audífonos", pendingAudio_.outMode == 1)) pendingAudio_.outMode = 1;
+                if (ImGui::Selectable("Deck 2", pendingAudio_.outMode == 2)) pendingAudio_.outMode = 2;
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine(0, 4 * s);
+            ImGui::SetNextItemWidth(devW);
+            const std::string hpPreview = formatWasapiLabel(curHpDev);
+            if (ImGui::BeginCombo("##dev2", hpPreview.c_str())) {
+                for (const auto& d : devs) {
+                    const std::string lbl = formatWasapiLabel(d.name);
+                    if (ImGui::Selectable(lbl.c_str(), curHpDev == d.name)) {
+                        pendingAudio_.hpDeviceName = d.name;
+                        if (pendingAudio_.deviceName.empty()) pendingAudio_.deviceName = curSpkDev;
+                        applyAudioConfig();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine(0, 4 * s);
+            ImGui::SetNextItemWidth(chW);
+            pendingAudio_.hpChan = std::clamp(pendingAudio_.hpChan, 0, 5);
+            if (ImGui::BeginCombo("##chan2", chanLabels[pendingAudio_.hpChan])) {
+                for (int c = 0; c < 6; ++c) {
+                    if (ImGui::Selectable(chanLabels[c], pendingAudio_.hpChan == c)) {
+                        pendingAudio_.hpChan = c;
+                        applyAudioConfig();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine(0, 4 * s);
+            if (ImGui::Button("Aplicar##ap2", ImVec2(apW, rowH - 2 * s))) applyAudioConfig();
+            ImGui::SameLine(0, 4 * s);
+            if (ImGui::Button("🎧##test2", ImVec2(prW, rowH - 2 * s))) {
+                engine_.mixer.testToneTarget = 2;
+                engine_.mixer.testToneFrames = (int)(engine_.sampleRate() * 0.65);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Probar tono de Preescucha (CUE) en Audífonos (%s · %s)", hpPreview.c_str(), chanLabels[pendingAudio_.hpChan]);
+            ImGui::SameLine(0, 4 * s);
+            if (ImGui::Button("×##del2", ImVec2(24 * s, rowH - 2 * s))) {
+                pendingAudio_.outMode = 0;
+                pendingAudio_.hpRouting = HpRouting::Ninguna;
+                applyAudioConfig();
+            }
+            y += rowH + 4 * s;
+        } else {
+            ImGui::SetCursorScreenPos(ImVec2(topPos.x + mw - 60 * s, y));
+            if (ImGui::Button("+##add_hp_row", ImVec2(28 * s, 24 * s))) {
+                pendingAudio_.outMode = 1;
+                pendingAudio_.hpChan = 1;
+                pendingAudio_.hpRouting = HpRouting::Canales34;
+                applyAudioConfig();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Añadir salida de Audífonos (Preescucha)");
+            y += 28 * s;
+        }
+
+        // ---- Panel de Preescucha en Vivo (CUE Plato A / Plato B, Volumen de Cascos y Mezcla CUE/MASTER)
+        y += 8 * s;
+        ImGui::SetCursorScreenPos(ImVec2(topPos.x, y));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.13f, 1.0f));
+        ImGui::BeginChild("vdj_cue_panel", ImVec2(mw, 128 * s), ImGuiChildFlags_Borders);
+        {
+            ImGui::TextColored(toVec4(col::Amber), "🎧 CONTROL DIRECTO DE PREESCUCHA (CASCOS) Y ESTADO:");
+            const bool pflA = engine_.deck[0].pfl.load();
+            const bool pflB = engine_.deck[1].pfl.load();
+            if (NeonButton(pflA ? "🎧 CUE PLATO A [ACTIVO]" : "🎧 CUE PLATO A (Preescuchar)", col::Amber, pflA, ImVec2(215 * s, 28 * s), true, fontHead, 12 * s)) {
+                engine_.deck[0].pfl = !pflA;
+            }
+            ImGui::SameLine(0, 8 * s);
+            if (NeonButton(pflB ? "🎧 CUE PLATO B [ACTIVO]" : "🎧 CUE PLATO B (Preescuchar)", col::Amber, pflB, ImVec2(215 * s, 28 * s), true, fontHead, 12 * s)) {
+                engine_.deck[1].pfl = !pflB;
+            }
+            ImGui::SameLine(0, 14 * s);
+            float hv = engine_.mixer.hpVol.load() * 100.f;
+            ImGui::SetNextItemWidth(165 * s);
+            if (ImGui::SliderFloat("##hpvol_sl", &hv, 0.f, 100.f, "Vol. Cascos: %.0f %%")) {
+                engine_.mixer.hpVol = hv / 100.f;
+                settings_.hpVol = engine_.mixer.hpVol.load();
+            }
+            ImGui::SameLine(0, 10 * s);
+            float cuePct = (1.f - engine_.mixer.hpMix.load()) * 100.f;
+            ImGui::SetNextItemWidth(185 * s);
+            if (ImGui::SliderFloat("##hpmix_sl", &cuePct, 0.f, 100.f, "Preescucha CUE: %.0f %%")) {
+                engine_.mixer.hpMix = 1.f - (cuePct / 100.f);
+                settings_.hpMix = engine_.mixer.hpMix.load();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("100 %% = En los cascos suena solo el plato que tenga el botón CUE encendido (pre-fader).\n50 %% = Mezcla mitad Preescucha CUE + mitad Master.");
+
+            const AudioState& st = audio_.state();
+            ImGui::Spacing();
+            ImGui::TextColored(toVec4(col::Green), "✓ Activo: Altavoces → %s (%s)   |   Audífonos (Preescucha) → %s (%s)   |   %u Hz",
+                               formatWasapiLabel(curSpkDev).c_str(), chanLabels[pendingAudio_.spkChan],
+                               pendingAudio_.outMode == 0 ? "Desactivado" : formatWasapiLabel(curHpDev).c_str(),
+                               chanLabels[pendingAudio_.hpChan], st.sampleRate);
+            ImGui::TextDisabled("Cómo preescuchar: activa el botón naranja «🎧 CUE» en el Plato A o Plato B (o aquí arriba). Aunque bajes el fader del plato a 0, lo oirás por tus cascos.");
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+
+        // ---- Barra inferior: Botón grande [☑ APLICAR] en el centro y selector [config 1] a la derecha
+        const float botY = totalH - 46 * s;
+        ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY() + 8 * s, botY));
+        const float applyW = 165 * s, applyH = 38 * s;
+        ImGui::SetCursorPosX((mw - applyW) * 0.5f);
+        if (vdjCardBtn("##big_apply", "☑", "APLICAR", "", true, ImVec2(applyW, applyH))) {
+            applyAudioConfig();
+            notify("Configuración de audio aplicada y guardada: Altavoces (" + std::string(chanLabels[pendingAudio_.spkChan]) + ") + Audífonos (" + std::string(chanLabels[pendingAudio_.hpChan]) + ").");
+        }
+        ImGui::SameLine(mw - 215 * s);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6 * s);
+        ImGui::SetNextItemWidth(135 * s);
+        const char* profiles[] = {"config 1", "Cascos WH201A (1&2 + 3&4)", "Altavoces + Cascos WH201A"};
+        static int profIdx = 0;
+        if (ImGui::Combo("##prof_combo", &profIdx, profiles, 3)) {
+            pendingAudio_.configProfile = profiles[profIdx];
+            if (profIdx == 1) {
+                pendingAudio_.outMode = 1;
+                pendingAudio_.hwMode = 0;
+                pendingAudio_.spkChan = 0;
+                pendingAudio_.hpChan = 1;
+                pendingAudio_.hpDeviceName = pendingAudio_.deviceName;
+                applyAudioConfig();
+            } else if (profIdx == 2 && devs.size() >= 2) {
+                pendingAudio_.outMode = 1;
+                pendingAudio_.spkChan = 0;
+                pendingAudio_.hpChan = 1;
+                for (const auto& d : devs) {
+                    if (d.name.find("Altavoces") != std::string::npos) pendingAudio_.deviceName = d.name;
+                    else if (d.name.find("WH201A") != std::string::npos || d.name.find("Auriculares") != std::string::npos) pendingAudio_.hpDeviceName = d.name;
+                }
+                applyAudioConfig();
+            }
+        }
+        ImGui::SameLine(0, 4 * s);
+        if (ImGui::Button("💾##save_prof", ImVec2(28 * s, 26 * s))) {
+            applyAudioConfig();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Guardar perfil de configuración de audio");
+        ImGui::SameLine(0, 4 * s);
+        if (ImGui::Button("×##close_aud", ImVec2(28 * s, 26 * s))) {
+            showAudio_ = false;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cerrar ventana de Configuración de Audio");
+    }
+    ImGui::EndChild();
+
+    ImGui::PopStyleColor();
     ImGui::End();
 }
 

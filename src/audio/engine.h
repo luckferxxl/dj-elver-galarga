@@ -113,7 +113,7 @@ struct StemStatus {
     StemStatus() { for (auto& p : peak) p = 0.f; }
 };
 
-enum class HpRouting : int { Ninguna = 0, Canales34 = 1, DispositivoAparte = 2, DivisionMono = 3 };
+enum class HpRouting : int { Ninguna = 0, Canales34 = 1, DispositivoAparte = 2, DivisionMono = 3, DecksSeparados = 4 };
 
 struct MixerParams {
     std::atomic<float> crossfader{0.5f};
@@ -122,6 +122,11 @@ struct MixerParams {
     std::atomic<float> hpVol{0.7f};
     std::atomic<float> hpMix{0.0f};  // 0 = solo preescucha, 1 = solo master
     std::atomic<int> hpRouting{(int)HpRouting::Ninguna};
+    std::atomic<int> spkChanPair{0}; // 0=chan 1&2, 1=chan 3&4, 2=chan 5&6, 3=chan 7&8, 4=chan 1 (Mono L), 5=chan 2 (Mono R)
+    std::atomic<int> hpChanPair{1};  // por defecto 1 = chan 3&4 (VirtualDJ)
+    std::atomic<int> hwChannels{4};  // canales físicos reales del dispositivo principal
+    std::atomic<int> testToneTarget{0}; // 0=ninguno, 1=Altavoces, 2=Audífonos
+    std::atomic<int> testToneFrames{0};
     std::atomic<bool> recording{false};
 };
 

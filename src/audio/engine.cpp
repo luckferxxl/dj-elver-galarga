@@ -782,7 +782,37 @@ void Engine::processBlock(float* out, int n, int outChannels) {
     }
 
     const HpRouting routing = (HpRouting)mixer.hpRouting.load(std::memory_order_relaxed);
-    if (routing != HpRouting::Ninguna) {
+    const int spkPair = std::clamp(mixer.spkChanPair.load(std::memory_order_relaxed), 0, 5);
+    const int hpPair  = std::clamp(mixer.hpChanPair.load(std::memory_order_relaxed), 0, 5);
+    const int hwCh    = mixer.hwChannels.load(std::memory_order_relaxed);
+    bool anyPfl = deck[0].pfl.load(std::memory_order_relaxed) || deck[1].pfl.load(std::memory_order_relaxed) || stem.pfl.load(std::memory_order_relaxed);
+
+    // Tono de prueba si el usuario pulsa "Probar" en Configuración de Audio
+    int toneRem = mixer.testToneFrames.load(std::memory_order_relaxed);
+    const int toneTgt = mixer.testToneTarget.load(std::memory_order_relaxed);
+    static double tonePhase = 0.0;
+    if (toneRem > 0) {
+        const double step1 = 2.0 * kPi * 440.0 / std::max(8000.0, fs_);
+        const double step2 = 2.0 * kPi * 554.37 / std::max(8000.0, fs_);
+        for (int i = 0; i < n; ++i) {
+            const float sTone = 0.22f * (float)(std::sin(tonePhase) + 0.7 * std::sin(tonePhase * (step2 / step1)));
+            tonePhase += step1;
+            if (tonePhase > 2.0 * kPi * 1000.0) tonePhase -= 2.0 * kPi * 1000.0;
+            if (toneTgt == 1) { mL_[i] += sTone; mR_[i] += sTone; }
+            else if (toneTgt == 2) { cL_[i] += sTone; cR_[i] += sTone; anyPfl = true; }
+        }
+        mixer.testToneFrames.store(std::max(0, toneRem - n), std::memory_order_relaxed);
+    }
+
+    if (routing == HpRouting::DecksSeparados) {
+        const float gA = faderToGain(deck[0].fader.load(std::memory_order_relaxed)) * master;
+        const float gB = faderToGain(deck[1].fader.load(std::memory_order_relaxed)) * master;
+        for (int i = 0; i < n; ++i) {
+            mL_[i] = dL_[0][i] * gA; mR_[i] = dR_[0][i] * gA;
+            hL_[i] = dL_[1][i] * gB; hR_[i] = dR_[1][i] * gB;
+        }
+        hpLimiter_.process(hL_, hR_, n);
+    } else if (routing != HpRouting::Ninguna) {
         const float mix = std::clamp(mixer.hpMix.load(std::memory_order_relaxed), 0.f, 1.f);
         const float hv = faderToGain(mixer.hpVol.load(std::memory_order_relaxed));
         for (int i = 0; i < n; ++i) {
@@ -792,7 +822,29 @@ void Engine::processBlock(float* out, int n, int outChannels) {
         hpLimiter_.process(hL_, hR_, n);
     }
 
-    const bool four = outChannels >= 4 && routing == HpRouting::Canales34;
+    auto writePair = [](float* o, int chCount, int pairIdx, float l, float r) {
+        if (chCount <= 0) return;
+        if (pairIdx == 4) { // chan 1 (Mono L)
+            o[0] += 0.5f * (l + r);
+            return;
+        }
+        if (pairIdx == 5) { // chan 2 (Mono R)
+            if (chCount >= 2) o[1] += 0.5f * (l + r);
+            else o[0] += 0.5f * (l + r);
+            return;
+        }
+        const int c0 = pairIdx * 2;
+        if (c0 + 1 < chCount) {
+            o[c0] += l;
+            o[c0 + 1] += r;
+        } else if (chCount >= 2) {
+            o[0] += l;
+            o[1] += r;
+        } else {
+            o[0] += 0.5f * (l + r);
+        }
+    };
+
     for (int i = 0; i < n; ++i) {
         float* o = out + (size_t)i * outChannels;
         for (int c = 0; c < outChannels; ++c) o[c] = 0.f;
@@ -801,11 +853,29 @@ void Engine::processBlock(float* out, int n, int outChannels) {
             o[1] = 0.5f * (mL_[i] + mR_[i]);
             continue;
         }
-        if (outChannels >= 2) { o[0] = mL_[i]; o[1] = mR_[i]; }
-        else o[0] = 0.5f * (mL_[i] + mR_[i]);
-        if (four) { o[2] = hL_[i]; o[3] = hR_[i]; }
+        if (routing == HpRouting::Canales34) {
+            // Si el dispositivo físico solo tiene 2 canales reales (p. ej. cascos WH201A estéreo) y el usuario tiene
+            // configurado Altavoces (chan 1&2) + Audífonos (chan 3&4) en ese mismo dispositivo:
+            // cuando pulsa CUE (anyPfl) escuchará directamente la preescucha en sus cascos (y en reposo el Master).
+            // Y si la tarjeta tiene >=4 canales físicos reales, chan 1&2 lleva Master y chan 3&4 lleva Preescucha por separado.
+            if (hwCh < 4 && spkPair == 0 && hpPair == 1 && anyPfl) {
+                writePair(o, outChannels, 0, hL_[i], hR_[i]);
+            } else {
+                writePair(o, outChannels, spkPair, mL_[i], mR_[i]);
+            }
+            if (outChannels >= 4) {
+                writePair(o, outChannels, hpPair, hL_[i], hR_[i]);
+            }
+            continue;
+        }
+        if (routing == HpRouting::DecksSeparados) {
+            writePair(o, outChannels, spkPair, mL_[i], mR_[i]);
+            if (outChannels >= 4) writePair(o, outChannels, hpPair, hL_[i], hR_[i]);
+            continue;
+        }
+        writePair(o, outChannels, spkPair, mL_[i], mR_[i]);
     }
-    if (routing == HpRouting::DispositivoAparte) {
+    if (routing == HpRouting::DispositivoAparte || routing == HpRouting::DecksSeparados) {
         for (int i = 0; i < n; ++i) { inter_[i * 2] = hL_[i]; inter_[i * 2 + 1] = hR_[i]; }
         if (!hpRing.write(inter_, (size_t)n * 2)) status.hpDropped.fetch_add((uint64_t)n, std::memory_order_relaxed);
     }

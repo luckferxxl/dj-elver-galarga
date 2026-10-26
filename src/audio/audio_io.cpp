@@ -33,7 +33,6 @@ void hpCallback(ma_device* dev, void* out, const void*, ma_uint32 frames) {
     float* o = (float*)out;
     const int ch = (int)dev->playback.channels;
     SpscFloatRing& ring = d->eng->hpRing;
-    // Compensación de deriva entre relojes: si sobra mucho, se descarta lo antiguo.
     const size_t avail = ring.available() / 2;
     const size_t target = (size_t)d->hpPeriod * 2;
     if (avail > target + (size_t)d->hpPeriod * 4) ring.skip((avail - target) * 2);
@@ -45,8 +44,15 @@ void hpCallback(ma_device* dev, void* out, const void*, ma_uint32 frames) {
         for (ma_uint32 i = 0; i < n; ++i) {
             float* f = o + (size_t)(done + i) * ch;
             const float l = i < got ? tmp[i * 2] : 0.f, r = i < got ? tmp[i * 2 + 1] : 0.f;
-            if (ch >= 2) { f[0] = l; f[1] = r; for (int c = 2; c < ch; ++c) f[c] = 0.f; }
-            else f[0] = 0.5f * (l + r);
+            if (ch >= 4) {
+                f[0] = l; f[1] = r; f[2] = l; f[3] = r;
+                for (int c = 4; c < ch; ++c) f[c] = 0.f;
+            } else if (ch >= 2) {
+                f[0] = l; f[1] = r;
+                for (int c = 2; c < ch; ++c) f[c] = 0.f;
+            } else {
+                f[0] = 0.5f * (l + r);
+            }
         }
         done += n;
     }
@@ -130,31 +136,45 @@ bool AudioIO::openOn(Engine& eng, const AudioConfig& cfg, bool useNull, std::str
     const ma_device_id* id = nullptr;
     int maxCh = 2;
     std::string name = "Predeterminado del sistema";
+    std::string resolvedSpkDev;
     if (!useNull && !cfg.deviceName.empty()) {
         bool found = false;
         for (auto& od : devices_) if (od.name == cfg.deviceName) {
-            id = &d_->playInfos[od.index].id; maxCh = od.maxChannels; name = od.name; found = true;
+            id = &d_->playInfos[od.index].id; maxCh = std::max(2, od.maxChannels); name = od.name; resolvedSpkDev = od.name; found = true;
         }
         if (!found) { err = "El dispositivo \"" + cfg.deviceName + "\" no está conectado."; return false; }
     } else if (!useNull) {
-        for (auto& od : devices_) if (od.isDefault) { maxCh = od.maxChannels; name = od.name + " (predeterminado)"; }
+        for (auto& od : devices_) if (od.isDefault) { maxCh = std::max(2, od.maxChannels); name = od.name; resolvedSpkDev = od.name; }
     }
 
+    std::string resolvedHpDev = cfg.hpDeviceName.empty() ? resolvedSpkDev : cfg.hpDeviceName;
     HpRouting routing = cfg.hpRouting;
-    std::string msg;
-    if (routing == HpRouting::Canales34 && maxCh < 4) {
-        routing = HpRouting::Ninguna;
-        msg = "El dispositivo no tiene 4 salidas: la preescucha por canales 3-4 no está disponible.";
+    if (cfg.outMode == 0) routing = HpRouting::Ninguna;
+    else if (cfg.outMode == 2) routing = HpRouting::DecksSeparados;
+    else if (cfg.hwMode == 2 || routing == HpRouting::DivisionMono) routing = HpRouting::DivisionMono;
+    else {
+        // outMode == 1 (ALTAVOCES + AUDIFONOS)
+        if (!useNull && !resolvedHpDev.empty() && !resolvedSpkDev.empty() && resolvedHpDev != resolvedSpkDev) {
+            routing = HpRouting::DispositivoAparte;
+        } else {
+            routing = HpRouting::Canales34;
+        }
     }
-    const int channels = routing == HpRouting::Canales34 ? 4 : 2;
+
+    std::string msg;
+    int needCh = 2;
+    if (routing == HpRouting::Canales34 || (routing == HpRouting::DecksSeparados && resolvedHpDev == resolvedSpkDev)) {
+        const int maxPair = std::max(cfg.spkChan < 4 ? cfg.spkChan : 0, cfg.hpChan < 4 ? cfg.hpChan : 0);
+        needCh = std::max(4, (maxPair + 1) * 2);
+    }
 
     d_->eng = &eng;
     ma_device_config dc = ma_device_config_init(ma_device_type_playback);
     dc.playback.pDeviceID = id;
     dc.playback.format = ma_format_f32;
-    dc.playback.channels = (ma_uint32)channels;
-    dc.playback.channelMixMode = ma_channel_mix_mode_simple;  // nunca mezclar auriculares en el master
-    dc.sampleRate = (ma_uint32)std::max(0, cfg.sampleRate);  // 0 = nativa del dispositivo (sin remuestreo extra)
+    dc.playback.channels = (ma_uint32)needCh;
+    dc.playback.channelMixMode = ma_channel_mix_mode_simple;
+    dc.sampleRate = (ma_uint32)std::max(0, cfg.sampleRate);
     dc.periodSizeInMilliseconds = (ma_uint32)std::clamp(cfg.periodMs, 2, 100);
     dc.periods = 2;
     dc.performanceProfile = ma_performance_profile_low_latency;
@@ -174,28 +194,35 @@ bool AudioIO::openOn(Engine& eng, const AudioConfig& cfg, bool useNull, std::str
         r = ma_device_init(ctx, &dc, &d_->dev);
         if (r == MA_SUCCESS) msg += (msg.empty() ? "" : " ") + std::string("El modo exclusivo no está disponible; se usa el modo compartido.");
     }
+    if (r != MA_SUCCESS && needCh > 2) {
+        dc.playback.channels = 2;
+        r = ma_device_init(ctx, &dc, &d_->dev);
+    }
     if (r != MA_SUCCESS) { err = "No se pudo abrir \"" + name + "\" (" + ma_result_description(r) + ")."; return false; }
     d_->devOk = true;
 
-    // El motor se prepara a la frecuencia real antes de arrancar (sin callback activo).
+    const int internalCh = d_->dev.playback.internalChannels > 0 ? (int)d_->dev.playback.internalChannels : maxCh;
     eng.prepare(d_->dev.sampleRate);
+    eng.mixer.spkChanPair.store(std::clamp(cfg.spkChan, 0, 5));
+    eng.mixer.hpChanPair.store(std::clamp(cfg.hpChan, 0, 5));
+    eng.mixer.hwChannels.store(internalCh);
     eng.mixer.hpRouting.store((int)routing);
 
-    std::string hpName;
-    if (routing == HpRouting::DispositivoAparte) {
+    std::string hpName = resolvedHpDev;
+    if (routing == HpRouting::DispositivoAparte || (routing == HpRouting::DecksSeparados && resolvedHpDev != resolvedSpkDev)) {
         const ma_device_id* hid = nullptr;
         bool found = false;
-        if (!useNull) for (auto& od : devices_) if (od.name == cfg.hpDeviceName) { hid = &d_->playInfos[od.index].id; found = true; hpName = od.name; }
-        if (!found || cfg.hpDeviceName == cfg.deviceName) {
-            routing = HpRouting::Ninguna;
+        if (!useNull) for (auto& od : devices_) if (od.name == resolvedHpDev) { hid = &d_->playInfos[od.index].id; found = true; hpName = od.name; }
+        if (!found) {
+            routing = HpRouting::Canales34;
             eng.mixer.hpRouting.store((int)routing);
-            msg += (msg.empty() ? "" : " ") + std::string(found ? "Los auriculares deben ir a un dispositivo distinto del master." : "El dispositivo de auriculares no está conectado.");
+            hpName = name;
         } else {
             ma_device_config hc = dc;
             hc.playback.pDeviceID = hid;
             hc.playback.channels = 2;
             hc.playback.shareMode = ma_share_mode_shared;
-            hc.sampleRate = d_->dev.sampleRate;  // miniaudio convierte si el dispositivo usa otra
+            hc.sampleRate = d_->dev.sampleRate;
             hc.dataCallback = hpCallback;
             if (ma_device_init(ctx, &hc, &d_->hpDev) == MA_SUCCESS) {
                 d_->hpOk = true;
@@ -203,16 +230,16 @@ bool AudioIO::openOn(Engine& eng, const AudioConfig& cfg, bool useNull, std::str
                 if (d_->hpPeriod <= 0) d_->hpPeriod = 480;
                 eng.hpRing.skip(eng.hpRing.available());
             } else {
-                routing = HpRouting::Ninguna;
+                routing = HpRouting::Canales34;
                 eng.mixer.hpRouting.store((int)routing);
-                msg += (msg.empty() ? "" : " ") + std::string("No se pudo abrir el dispositivo de auriculares.");
+                hpName = name;
             }
         }
     }
 
     if (d_->hpOk && ma_device_start(&d_->hpDev) != MA_SUCCESS) {
         ma_device_uninit(&d_->hpDev); d_->hpOk = false;
-        routing = HpRouting::Ninguna; eng.mixer.hpRouting.store((int)routing);
+        routing = HpRouting::Canales34; eng.mixer.hpRouting.store((int)routing);
     }
     if (ma_device_start(&d_->dev) != MA_SUCCESS) {
         close();
@@ -225,12 +252,15 @@ bool AudioIO::openOn(Engine& eng, const AudioConfig& cfg, bool useNull, std::str
     state_.simulated = useNull;
     state_.backend = backendName(ctx->backend);
     state_.deviceName = useNull ? "Sin salida (modo simulado)" : name;
-    state_.hpDeviceName = d_->hpOk ? hpName : "";
+    state_.hpDeviceName = d_->hpOk ? hpName : (routing != HpRouting::Ninguna ? name : "");
     state_.sampleRate = d_->dev.sampleRate;
     state_.channels = (int)d_->dev.playback.channels;
+    state_.nativeChannels = internalCh;
     state_.periodFrames = (int)d_->dev.playback.internalPeriodSizeInFrames;
     state_.exclusive = exclusive;
     state_.hpRouting = routing;
+    state_.spkChan = cfg.spkChan;
+    state_.hpChan = cfg.hpChan;
     state_.message = msg;
     return true;
 }

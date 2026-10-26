@@ -15,12 +15,17 @@ struct OutputDevice {
 };
 
 struct AudioConfig {
-    std::string deviceName;     // vacío = predeterminado del sistema
+    std::string deviceName;     // vacío = predeterminado del sistema (Altavoces / Salida 1)
     int periodMs = 10;
     int sampleRate = 0;         // 0 = la del dispositivo; si no la admite, miniaudio convierte
     bool exclusive = false;
-    HpRouting hpRouting = HpRouting::Ninguna;
-    std::string hpDeviceName;   // para DispositivoAparte
+    HpRouting hpRouting = HpRouting::Canales34;
+    std::string hpDeviceName;   // para Audífonos / Salida 2 (vacío o igual a deviceName = mismo dispositivo)
+    int outMode = 1;            // 0 = SOLO ALTAVOCES, 1 = ALTAVOCES + AUDIFONOS, 2 = DECKS SEPARADOS
+    int hwMode = 0;             // 0 = AUDIO INTERCONSTRUIDO, 1 = TARJETA(S) DE AUDIO USB, 2 = DIVISOR EN "Y" DE ESTEREO A MONOAURAL
+    int spkChan = 0;            // 0 = chan 1 & 2, 1 = chan 3 & 4, 2 = chan 5 & 6, 3 = chan 7 & 8, 4 = chan 1 (Mono L), 5 = chan 2 (Mono R)
+    int hpChan = 1;             // 1 = chan 3 & 4 por defecto (como en VirtualDJ)
+    std::string configProfile = "config 1";
 };
 
 struct AudioState {
@@ -31,9 +36,12 @@ struct AudioState {
     std::string hpDeviceName;
     uint32_t sampleRate = 0;
     int channels = 0;
+    int nativeChannels = 2;
     int periodFrames = 0;
     bool exclusive = false;
     HpRouting hpRouting = HpRouting::Ninguna;  // la que realmente está activa
+    int spkChan = 0;
+    int hpChan = 1;
     std::string message;        // avisos para el usuario
 };
 
