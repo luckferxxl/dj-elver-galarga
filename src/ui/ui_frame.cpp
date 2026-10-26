@@ -440,10 +440,10 @@ void App::frame() {
             y += ch + gap;
             hsplit("##decksplit", y - gap * 0.5f, &settings_.deckHeight, ch, 186.f, 560.f, &settings_.decksCollapsed);
         } else {
-            const float maxDeckH = std::max(186 * s, bottom0 - y - browserMin - gap - rackSpace);
-            // 0.10.4: lo bastante alto para que la zona de debajo de cada plato (CUES, LOOP, FX…) tenga sus dos filas.
-            const float defH = std::clamp((bottom0 - y - rackSpace) * 0.6f, 256 * s, 310 * s);
-            const float deckH = std::clamp(settings_.deckHeight > 0 ? settings_.deckHeight * s : defH, 186 * s, maxDeckH);
+            const float maxDeckH = std::max(216 * s, bottom0 - y - browserMin - gap - rackSpace);
+            // 0.14.0 Pro: espacio para la barra permanente de STEMS en vivo + las dos filas de pads inferiores.
+            const float defH = std::clamp((bottom0 - y - rackSpace) * 0.64f, 284 * s, 342 * s);
+            const float deckH = std::clamp(settings_.deckHeight > 0 ? std::max(settings_.deckHeight * s, 284 * s) : defH, 216 * s, maxDeckH);
             const float mixW = std::clamp(sz.x * 0.175f, 236 * s, 300 * s);
             const float deckW = (sz.x - mixW - 4 * gap) * 0.5f;
             drawDeck(0, ImVec2(o.x + gap, y), ImVec2(o.x + gap + deckW, y + deckH));
@@ -664,7 +664,7 @@ void App::drawTopBar(float h) {
     int pend = 0;
     for (auto& j : stems_.jobs()) if (!j.done && !j.failed) ++pend;
     char sepLbl[40];
-    std::snprintf(sepLbl, sizeof sepLbl, pend ? "SEPARADOR (%d)" : "SEPARADOR", pend);
+    std::snprintf(sepLbl, sizeof sepLbl, pend ? "STEMS / SEPARADOR (%d)" : "STEMS / SEPARADOR", pend);
     const char* labels[4] = {"MEZCLA", "BIBLIOTECA", "ELVERKEY / MIX LAB", sepLbl};
     const int modes[4] = {0, 2, 3, 1};
     const char* tips[4] = {"Dos platos, mezclador y navegador", "Navegador a pantalla completa (carpetas, listas y Sidelist)",
@@ -1077,6 +1077,20 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
             float bx0 = tx + ew + 10 * s + fontHead->CalcTextSizeA(16 * s, FLT_MAX, 0, rem.c_str()).x + 12 * s;
             // Chips de estado a la derecha. El primero (0.11.3): el botón de efectos del plato.
             float chx = drawDeckFxButton(d, ix1, ty + 3 * s, 18 * s, std::max(40 * s, ix1 - bx0 - 4 * s), ix1 - bx0 - 116 * s);
+            // Chip rápido "🎛 STEMS" en la cabecera del plato
+            if (chx - bx0 > 140 * s) {
+                const bool stemChanged = p.stemMute[0].load() || p.stemMute[1].load() || p.stemMute[2].load() || p.stemMute[3].load();
+                const char* stChipTxt = "🎛 STEMS";
+                const float stw = BadgeWidth(18 * s, stChipTxt, fontHead, 11.5f * s);
+                chx -= stw;
+                const ImVec2 stp(chx, ty + 3 * s);
+                Badge(dl, stp, 18 * s, stChipTxt, stemChanged ? col::Amber : col::Violet, stemChanged || padMode_[d] == 8, fontHead, 11.5f * s);
+                ImGui::SetCursorScreenPos(stp);
+                char stbid[24]; std::snprintf(stbid, sizeof stbid, "##stchip%d", d);
+                if (ImGui::InvisibleButton(stbid, ImVec2(stw, 18 * s))) padMode_[d] = (padMode_[d] == 8 ? 0 : 8);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Abrir controles avanzados de STEMS en tiempo real (Voz, Batería, Bajo, Instrumentos)");
+                chx -= 4 * s;
+            }
             // Botón compacto "💡 Siguiente" (recomendador armónico instantáneo para este plato)
             if (has && chx - bx0 > 74 * s) {
                 const char* recTxt = "💡 Siguiente";
@@ -1315,7 +1329,100 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
             if (ImGui::BeginPopup("menuplato")) { drawDeckMenu(d); ImGui::EndPopup(); }
         }
     }
-    y += bh + 10 * s;
+    y += bh + 6 * s;
+
+    // ---- BARRA FIJA SIEMPRE VISIBLE DE STEMS EN TIEMPO REAL (🎤 VOZ · 🥁 BATERÍA · 🎸 BAJO · 🎹 INSTRUM. + ACAPELLA / INSTRUM)
+    {
+        const float stemBarH = 25 * s;
+        const char* stLabelsOn[4]  = {"🎤 VOZ", "🥁 BATERÍA", "🎸 BAJO", "🎹 INSTRUM."};
+        const char* stLabelsOff[4] = {"🎤 VOZ [OFF]", "🥁 BAT. [OFF]", "🎸 BAJO [OFF]", "🎹 INST. [OFF]"};
+        const ImU32 stColors[4] = {col::Violet, col::Amber, col::Red, col::Green};
+        const bool isAcapella = !p.stemMute[0].load() && p.stemMute[1].load() && p.stemMute[2].load() && p.stemMute[3].load();
+        const bool isInstrum  = p.stemMute[0].load() && !p.stemMute[1].load() && !p.stemMute[2].load() && !p.stemMute[3].load();
+        const float tagW = 46 * s;
+        const float quickW = 68 * s;
+        const float padGap = 4 * s;
+        const float availStW = W - tagW - 2 * quickW - 6 * padGap;
+        const float btnStW = std::max(44 * s, availStW / 4.f);
+
+        // Etiqueta "STEMS" a la izquierda
+        dl->AddRectFilled(ImVec2(cx0, y), ImVec2(cx0 + tagW, y + stemBarH), col::Panel2, 4 * s);
+        CenterText(dl, ImVec2(cx0, y), ImVec2(cx0 + tagW, y + stemBarH), col::DeckA, "STEMS", fontHead, 11.5f * s);
+
+        float sx = cx0 + tagW + padGap;
+        for (int k = 0; k < 4; ++k) {
+            ImGui::SetCursorScreenPos(ImVec2(sx, y));
+            ImGui::PushID(k + 880 + d * 10);
+            const bool active = !p.stemMute[k].load();
+            const ImU32 cStem = active ? stColors[k] : col::Red;
+            const ImVec2 bp0 = ImGui::GetCursorScreenPos();
+            if (NeonButton(active ? stLabelsOn[k] : stLabelsOff[k], cStem, active, ImVec2(btnStW, stemBarH), true, fontHead, 11.8f * s)) {
+                p.stemMute[k] = active;
+            }
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("stem_bar_popup");
+            // Vúmetro en vivo dentro del botón del Stem
+            const float pk = std::clamp(st.stemPeak[k].load() * 1.45f, 0.f, 1.f);
+            if (pk > 0.01f && active) {
+                dl->AddRectFilled(ImVec2(bp0.x + 3 * s, bp0.y + stemBarH - 3.2f * s),
+                                  ImVec2(bp0.x + 3 * s + (btnStW - 6 * s) * pk, bp0.y + stemBarH - 1.2f * s), stColors[k], 1.5f * s);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s (%s · Vol %.0f%% · FX %.0f%%)\nClic izquierdo: activar / silenciar en vivo (0 ms latencia)\nClic derecho: ajustar volumen, filtro/efecto o separar con IA Demucs",
+                                  stLabelsOn[k], active ? "ACTIVO" : "SILENCIADO", p.stemVol[k].load() * 100.f, p.stemFx[k].load() * 100.f);
+            }
+            if (ImGui::BeginPopup("stem_bar_popup")) {
+                ImGui::TextColored(toVec4(stColors[k]), "%s · CONTROL EN TIEMPO REAL", stLabelsOn[k]);
+                ImGui::Separator();
+                bool mNow = !p.stemMute[k].load();
+                if (ImGui::Checkbox("Stem activo (sonando)", &mNow)) p.stemMute[k] = !mNow;
+                float vPct = p.stemVol[k].load() * 100.f;
+                if (ImGui::SliderFloat("Volumen (%)", &vPct, 0.f, 150.f, "%.0f %%")) p.stemVol[k] = vPct / 100.f;
+                float fxPct = p.stemFx[k].load() * 100.f;
+                if (ImGui::SliderFloat("Efecto / Filtro Stem (%)", &fxPct, 0.f, 100.f, "%.0f %%")) p.stemFx[k] = fxPct / 100.f;
+                ImGui::Separator();
+                if (ImGui::Button("Restablecer este stem (100%)")) { p.stemMute[k] = false; p.stemVol[k] = 1.f; p.stemFx[k] = 0.f; }
+                ImGui::SameLine();
+                if (ImGui::Button("Activar los 4 stems")) {
+                    for (int j = 0; j < 4; ++j) { p.stemMute[j] = false; p.stemVol[j] = 1.f; p.stemFx[j] = 0.f; }
+                }
+                if (has && ImGui::Button("⚡ Separar canción con IA profunda (Demucs)…")) {
+                    separateFile(dk.path);
+                    mode_ = 1;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+            sx += btnStW + padGap;
+        }
+
+        // Botón rápido ACAPELLA (solo Voz)
+        ImGui::SetCursorScreenPos(ImVec2(sx, y));
+        char acaId[24]; std::snprintf(acaId, sizeof acaId, "ACAPELLA##aca%d", d);
+        if (NeonButton(acaId, col::Violet, isAcapella, ImVec2(quickW, stemBarH), true, fontHead, 11.f * s)) {
+            if (isAcapella) {
+                for (int j = 0; j < 4; ++j) p.stemMute[j] = false;
+            } else {
+                p.stemMute[0] = false; p.stemMute[1] = true; p.stemMute[2] = true; p.stemMute[3] = true;
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dejar solo la VOZ (Acapella) en vivo · Clic otra vez para reactivar los 4 stems");
+        sx += quickW + padGap;
+
+        // Botón rápido INSTRUM (sin Voz / Instrumental)
+        ImGui::SetCursorScreenPos(ImVec2(sx, y));
+        char insId[24]; std::snprintf(insId, sizeof insId, "INSTRUM##ins%d", d);
+        if (NeonButton(insId, col::Green, isInstrum, ImVec2(quickW, stemBarH), true, fontHead, 11.f * s)) {
+            if (isInstrum) {
+                for (int j = 0; j < 4; ++j) p.stemMute[j] = false;
+            } else {
+                p.stemMute[0] = true; p.stemMute[1] = false; p.stemMute[2] = false; p.stemMute[3] = false;
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quitar la VOZ (dejar base instrumental) en vivo · Clic otra vez para reactivar los 4 stems");
+
+        y += stemBarH + 6 * s;
+    }
 
     // Aviso interactivo si al cargar la pista había quedado activado el pitch anterior
     if (dk.hasPendingPitchPrompt && has) {
