@@ -1331,7 +1331,7 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
     }
     y += bh + 6 * s;
 
-    // ---- BARRA FIJA SIEMPRE VISIBLE DE STEMS EN TIEMPO REAL (🎤 VOZ · 🥁 BATERÍA · 🎸 BAJO · 🎹 INSTRUM. + ACAPELLA / INSTRUM)
+    // ---- BARRA FIJA SIEMPRE VISIBLE DE STEMS EN TIEMPO REAL (🎤 VOZ · 🥁 BATERÍA · 🎸 BAJO · 🎹 INSTRUM. + ACAPELLA / INSTRUM / NORMAL)
     {
         const float stemBarH = 25 * s;
         const char* stLabelsOn[4]  = {"🎤 VOZ", "🥁 BATERÍA", "🎸 BAJO", "🎹 INSTRUM."};
@@ -1339,11 +1339,18 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
         const ImU32 stColors[4] = {col::Violet, col::Amber, col::Red, col::Green};
         const bool isAcapella = !p.stemMute[0].load() && p.stemMute[1].load() && p.stemMute[2].load() && p.stemMute[3].load();
         const bool isInstrum  = p.stemMute[0].load() && !p.stemMute[1].load() && !p.stemMute[2].load() && !p.stemMute[3].load();
-        const float tagW = 46 * s;
-        const float quickW = 68 * s;
-        const float padGap = 4 * s;
-        const float availStW = W - tagW - 2 * quickW - 6 * padGap;
-        const float btnStW = std::max(44 * s, availStW / 4.f);
+        bool anyStemModBar = false;
+        for (int k = 0; k < 4; ++k) {
+            if (p.stemMute[k].load() || std::fabs(p.stemVol[k].load() - 1.f) > 0.01f || p.stemFx[k].load() > 0.01f) anyStemModBar = true;
+        }
+        const bool anyFxOrFilterMod = p.fxOn.load() || std::fabs(p.filter.load()) > 0.01f ||
+                                      std::fabs(p.eqLow.load() - 0.5f) > 0.02f || std::fabs(p.eqMid.load() - 0.5f) > 0.02f || std::fabs(p.eqHigh.load() - 0.5f) > 0.02f;
+        const float tagW = 42 * s;
+        const float quickW = 60 * s;
+        const float normW  = 66 * s;
+        const float padGap = 3.5f * s;
+        const float availStW = W - tagW - 2 * quickW - normW - 7 * padGap;
+        const float btnStW = std::max(40 * s, availStW / 4.f);
 
         // Etiqueta "STEMS" a la izquierda
         dl->AddRectFilled(ImVec2(cx0, y), ImVec2(cx0 + tagW, y + stemBarH), col::Panel2, 4 * s);
@@ -1412,7 +1419,7 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
         // Botón rápido INSTRUM (sin Voz / Instrumental)
         ImGui::SetCursorScreenPos(ImVec2(sx, y));
         char insId[24]; std::snprintf(insId, sizeof insId, "INSTRUM##ins%d", d);
-        if (NeonButton(insId, col::Green, isInstrum, ImVec2(quickW, stemBarH), true, fontHead, 11.f * s)) {
+        if (NeonButton(insId, col::Green, isInstrum, ImVec2(quickW, stemBarH), true, fontHead, 10.8f * s)) {
             if (isInstrum) {
                 for (int j = 0; j < 4; ++j) p.stemMute[j] = false;
             } else {
@@ -1420,6 +1427,46 @@ void App::drawDeck(int d, ImVec2 a, ImVec2 b) {
             }
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quitar la VOZ (dejar base instrumental) en vivo · Clic otra vez para reactivar los 4 stems");
+        sx += quickW + padGap;
+
+        // Botón directo NORMAL (desactivar todo corte/efecto de Stems y que suene el tema normal 100% original)
+        ImGui::SetCursorScreenPos(ImVec2(sx, y));
+        char nrmId[32];
+        const bool isModified = anyStemModBar || anyFxOrFilterMod;
+        std::snprintf(nrmId, sizeof nrmId, "%s##nrm%d", isModified ? "↺ NORMAL" : "✓ NORMAL", d);
+        if (NeonButton(nrmId, isModified ? col::Amber : col::Green, true, ImVec2(normW, stemBarH), true, fontHead, 10.8f * s)) {
+            const bool resetAll = ImGui::GetIO().KeyShift || (!anyStemModBar && anyFxOrFilterMod);
+            for (int j = 0; j < 4; ++j) {
+                p.stemMute[j] = false;
+                p.stemVol[j]  = 1.f;
+                p.stemFx[j]   = 0.f;
+            }
+            if (resetAll) {
+                p.fxOn = false;
+                p.filter = 0.f;
+                p.eqLow = 0.5f; p.eqMid = 0.5f; p.eqHigh = 0.5f;
+            }
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("normal_reset_popup");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Desactivar todo y que suene el tema NORMAL (100%% original intacto)\n"
+                              "• Clic izquierdo: reactiva los 4 Stems al 100%% (y si ya estaban activos, quita Filtro/FX/EQ)\n"
+                              "• Mayús + Clic (o Clic derecho): restablece Stems + Filtro + EQ + Efectos del plato a neutro");
+        }
+        if (ImGui::BeginPopup("normal_reset_popup")) {
+            ImGui::TextColored(toVec4(col::Green), "SONIDO NORMAL DEL PLATO %s", d ? "B" : "A");
+            ImGui::Separator();
+            if (ImGui::MenuItem("Reactivar los 4 Stems al 100% (bypass original)")) {
+                for (int j = 0; j < 4; ++j) { p.stemMute[j] = false; p.stemVol[j] = 1.f; p.stemFx[j] = 0.f; }
+            }
+            if (ImGui::MenuItem("Desactivar TODO (Stems + Filtro + EQ + Efectos del plato)")) {
+                for (int j = 0; j < 4; ++j) { p.stemMute[j] = false; p.stemVol[j] = 1.f; p.stemFx[j] = 0.f; }
+                p.fxOn = false;
+                p.filter = 0.f;
+                p.eqLow = 0.5f; p.eqMid = 0.5f; p.eqHigh = 0.5f;
+            }
+            ImGui::EndPopup();
+        }
 
         y += stemBarH + 6 * s;
     }
@@ -1707,7 +1754,7 @@ void App::drawDeckTabs(int d, float x, float y, float w, float h) {
                 p.stemMute[0] = true; p.stemMute[1] = false; p.stemMute[2] = false; p.stemMute[3] = true;
             }
             ImGui::SameLine(0, sp);
-            if (NeonButton("RESTABLECER 4 STEMS", acc, !anyStemMod, ImVec2(sw4, rowB), true, fontHead, 11.5f * s)) {
+            if (NeonButton(anyStemMod ? "↺ SONIDO NORMAL (4 STEMS)" : "✓ SONIDO NORMAL (100%)", anyStemMod ? col::Amber : col::Green, true, ImVec2(sw4, rowB), true, fontHead, 11.5f * s)) {
                 for (int k = 0; k < 4; ++k) { p.stemMute[k] = false; p.stemVol[k] = 1.f; p.stemFx[k] = 0.f; }
             }
         }
