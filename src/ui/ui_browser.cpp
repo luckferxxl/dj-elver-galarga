@@ -859,6 +859,17 @@ void App::drawTree(ImVec2 a, ImVec2 b) {
     if (treeRow("coleccion", 0, (int)Ic::Note, col::TextDim, "Colección", cnt, src_.kind == Src::Coleccion, false, nullptr) & 1) selectSource(BrowseSrc{});
     ImGui::SetItemTooltip("Todas las pistas conocidas (carpetas favoritas y carpetas que has abierto)");
     if (ImGui::BeginPopupContextItem("ctxcol")) {
+        if (ImGui::MenuItem("🔍 Buscar y relocalizar toda la música del PC")) {
+            library_.scanPcMusic(true);
+            notify("Buscando toda la música del PC, relocalizando pistas movidas y limpiando borradas…");
+        }
+        if (ImGui::MenuItem("🧹 Quitar temas no encontrados de la colección")) {
+            const int n = library_.relocateAndPurgeMissing(true);
+            library_.save();
+            ++srcGen_;
+            notify(n > 0 ? ("Relocalizadas / limpiadas " + std::to_string(n) + " pistas no encontradas.") : "La colección está 100% limpia (0 pistas no encontradas).");
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("Añadir carpeta favorita…")) {
             const std::wstring f = win::pickFolder(hwnd_);
             if (!f.empty()) { library_.addFolder(f); notify("Escaneando " + toUtf8(f) + "…"); }
@@ -1088,6 +1099,17 @@ void App::drawTrackList(ImVec2 a, ImVec2 b) {
         ImGui::SetItemTooltip("Opciones de la lista");
     }
     if (ImGui::BeginPopup("menulista")) {
+        if (ImGui::MenuItem("🔍 Buscar y relocalizar toda la música del PC")) {
+            library_.scanPcMusic(true);
+            notify("Buscando toda la música del PC, relocalizando movidos y limpiando borrados…");
+        }
+        if (ImGui::MenuItem("🧹 Quitar temas no encontrados de la colección")) {
+            const int n = library_.relocateAndPurgeMissing(true);
+            library_.save();
+            ++srcGen_;
+            notify(n > 0 ? ("Relocalizadas / limpiadas " + std::to_string(n) + " pistas no encontradas.") : "La colección está 100% limpia (0 pistas no encontradas).");
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("Playlists inteligentes y sugerencias…")) showLibraryTools_=true;
         if (keyFilter_ >= 0 && ImGui::MenuItem("Quitar el filtro de tonalidad")) keyFilter_ = -1;
         if (ImGui::MenuItem("Importar de VirtualDJ (tonalidad, BPM, cues, listas)…")) openVdjImport();
@@ -1161,15 +1183,26 @@ void App::drawTrackList(ImVec2 a, ImVec2 b) {
     ImGui::SetCursorScreenPos(ImVec2(rx, by));
     if (IconButton("##subir", Ic::ArrowUp, ImVec2(bh, bh), col::DeckA, false, canMove, 0.5f)) moveSel(-1);
     ImGui::SetItemTooltip("Subir las pistas seleccionadas");
-    // Añadir
+    // Añadir y Relocalizar PC
     {
         const float aw = 118 * s;
-        rx -= aw + 8 * s;
+        rx -= aw + 6 * s;
         ImGui::SetCursorScreenPos(ImVec2(rx, by));
         const ImVec2 pp = ImGui::GetCursorScreenPos();
         if (NeonButton("Añadir temas  ##anadir", col::DeckA, false, ImVec2(aw, bh), true, fontHead, 14 * s)) ImGui::OpenPopup("anadir");
         DrawIcon(dl, Ic::ChevDown, ImVec2(pp.x + aw - 14 * s, pp.y + bh * 0.5f), 11 * s, col::Text);
         if (ImGui::BeginPopup("anadir")) {
+            if (ImGui::MenuItem("🔍 Buscar toda la música del PC y relocalizar movidos")) {
+                library_.scanPcMusic(true);
+                notify("Escaneando música del PC y relocalizando canciones movidas…");
+            }
+            if (ImGui::MenuItem("🧹 Limpiar temas no encontrados / borrados")) {
+                const int n = library_.relocateAndPurgeMissing(true);
+                library_.save();
+                ++srcGen_;
+                notify(n > 0 ? ("Relocalizadas / limpiadas " + std::to_string(n) + " pistas.") : "0 pistas no encontradas: colección limpia.");
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Archivos…")) {
                 auto files = win::pickAudioFiles(hwnd_, true);
                 if (!files.empty()) {
@@ -1193,7 +1226,22 @@ void App::drawTrackList(ImVec2 a, ImVec2 b) {
             }
             ImGui::EndPopup();
         }
-        ImGui::SetItemTooltip("Añadir archivos o carpetas (también puedes arrastrarlos desde el Explorador)");
+        ImGui::SetItemTooltip("Añadir archivos, carpetas o escanear y relocalizar toda la música del PC");
+
+        // Botón directo para Relocalizar / Escanear PC
+        const float rw = 128 * s;
+        if (rx - rw - 8 * s > x + 220 * s) {
+            rx -= rw + 6 * s;
+            ImGui::SetCursorScreenPos(ImVec2(rx, by));
+            if (NeonButton("🔄 Relocalizar PC##relocpc", col::Green, library_.scanning(), ImVec2(rw, bh), !library_.scanning(), fontHead, 12.5f * s)) {
+                const int instant = library_.relocateAndPurgeMissing(true);
+                library_.save();
+                library_.scanPcMusic(true);
+                ++srcGen_;
+                notify("Buscando música en el PC y relocalizando canciones movidas (" + std::to_string(instant) + " ajustadas al instante)…");
+            }
+            ImGui::SetItemTooltip("Busca todos los MP3/audios del PC, actualiza automáticamente las canciones que hayas movido de carpeta\nconservando tus Cues, BPM, Tonalidad y Playlists, y quita las borradas.");
+        }
     }
     // Buscar
     {
@@ -1245,6 +1293,29 @@ void App::drawTrackList(ImVec2 a, ImVec2 b) {
         dl->AddText(ImGui::GetFont(), 13.5f * s, ImVec2(sx, hp.y + 22 * s), col::TextDim, ellipsize(st, maxW - (sx - x), ImGui::GetFont(), 13.5f * s).c_str());
     }
     ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + headH + 4 * s));
+    {
+        size_t missingCount = 0;
+        {
+            std::lock_guard<std::recursive_mutex> lk(library_.mutex());
+            for (const auto& t : library_.tracks()) if (t.missing) ++missingCount;
+        }
+        if (missingCount > 0) {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, toVec4(col::withAlpha(col::Amber, 34)));
+            ImGui::BeginChild("missing_bar", ImVec2(w, 28 * s), ImGuiChildFlags_None);
+            ImGui::SetCursorPos(ImVec2(8 * s, 4 * s));
+            ImGui::TextColored(toVec4(col::Amber), "⚠ Hay %zu tema(s) movidos o no encontrados en su ruta antigua:", missingCount);
+            ImGui::SameLine(0, 10 * s);
+            if (NeonButton("🔄 Relocalizar movidos y limpiar borrados ahora", col::Green, true, ImVec2(290 * s, 20 * s), true, fontHead, 11.5f * s)) {
+                const int n = library_.relocateAndPurgeMissing(true);
+                library_.save();
+                library_.scanPcMusic(true);
+                ++srcGen_;
+                notify("Relocalizadas / limpiadas " + std::to_string(n) + " pistas y escaneando el PC…");
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        }
+    }
 
     // ---- Tabla
     // Densidad: cómodas (con carátula), compactas o muy compactas (cientos o miles de pistas).

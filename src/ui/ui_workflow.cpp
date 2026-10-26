@@ -86,6 +86,22 @@ void App::drawPerformance(int d) {
 void App::drawLibraryTools() {
     ImGui::SetNextWindowSize(ImVec2(650*S(),550*S()),ImGuiCond_Appearing);
     if (!ImGui::Begin("Organización y sugerencias",&showLibraryTools_)) { ImGui::End(); return; }
+    ImGui::SeparatorText("Mantenimiento y Relocalización Inteligente del PC");
+    ImGui::TextWrapped("Si has movido carpetas de música o borrado archivos antiguos, pulsa aquí para buscar automáticamente todos los audios de tu PC, relocalizar las canciones movidas conservando tus Hot Cues, BPM, Tonalidad y Playlists, y limpiar los archivos borrados.");
+    if (ImGui::Button("🔄 Buscar toda la música del PC y relocalizar movidos")) {
+        const int n = library_.relocateAndPurgeMissing(true);
+        library_.save();
+        library_.scanPcMusic(true);
+        ++srcGen_;
+        notify("Relocalizando biblioteca y escaneando música del PC (" + std::to_string(n) + " ajustadas al instante)…");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("🧹 Quitar no encontrados")) {
+        const int n = library_.relocateAndPurgeMissing(true);
+        library_.save();
+        ++srcGen_;
+        notify(n > 0 ? ("Limpiadas " + std::to_string(n) + " pistas no encontradas.") : "0 pistas no encontradas.");
+    }
     ImGui::SeparatorText("Sugerencias de mezcla");
     bool changed=false;
     const char* decks[] = {"Automático", "Deck A", "Deck B"};

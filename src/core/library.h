@@ -67,6 +67,9 @@ public:
     void addFolder(const std::wstring& folder);     // escanea en segundo plano
     void removeFolder(size_t i);
     void rescan();
+    void scanPcMusic(bool purgeUnfound = true);     // auto-descubre música del PC, relocaliza pistas movidas y limpia borradas
+    int relocateAndPurgeMissing(bool purgeUnfound = true); // fusiona pistas movidas con sus nuevas rutas y purga no encontradas
+    int purgeMissingTracks() { return relocateAndPurgeMissing(true); }
     bool scanning() const { return scanning_.load(); }
     int scannedCount() const { return scanned_.load(); }
 
@@ -113,7 +116,7 @@ public:
     std::wstring dbFile() const;
 
 private:
-    void scanThread(std::vector<std::wstring> roots);
+    void scanThread(std::vector<std::wstring> roots, bool purgeAfter = false);
     void browseThread();
     void analysisThread();
     LibTrack makeTrack(const std::wstring& path);

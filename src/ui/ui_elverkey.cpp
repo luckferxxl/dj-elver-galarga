@@ -1374,6 +1374,15 @@ void App::drawElverKeyContent() {
             runLibraryAudit();
             notify("Auditoría completada: " + std::to_string(g_ek.dupPairs.size()) + " posibles duplicados y " + std::to_string(g_ek.healthIssues.size()) + " avisos de salud.", false);
         }
+        ImGui::SameLine(0, 8 * s);
+        if (NeonButton("🔄 Relocalizar Música del PC y Limpiar Borrados", col::Green, false, ImVec2(290 * s, 28 * s), true, fontHead, 12.5f * s)) {
+            const int n = library_.relocateAndPurgeMissing(true);
+            library_.save();
+            library_.scanPcMusic(true);
+            runLibraryAudit();
+            ++srcGen_;
+            notify("Biblioteca relocalizada y limpia (" + std::to_string(n) + " ajustadas). Escaneando carpetas del PC…", false);
+        }
 
         ImGui::Spacing();
         const float availH = std::max(100 * s, ImGui::GetContentRegionAvail().y - 34 * s);

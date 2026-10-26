@@ -26,6 +26,30 @@ bool fileStat(const std::wstring& p, uint64_t& size, int64_t& mtime) {
     return true;
 }
 
+bool dirExistsW(const std::wstring& p) {
+    const DWORD a = GetFileAttributesW(p.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+bool isExcludedLibraryPath(const std::wstring& p) {
+    wchar_t testEnv[16] = {};
+    const bool inUnitTest = GetEnvironmentVariableW(L"RDJ_DATA_DIR", testEnv, 16) > 0;
+    std::wstring low = p;
+    for (auto& c : low) {
+        if (c == L'/') c = L'\\';
+        else if (c >= L'A' && c <= L'Z') c = (wchar_t)(c - L'A' + L'a');
+    }
+    if (!inUnitTest && low.find(L"\\appdata\\local\\temp\\") != std::wstring::npos) return true;
+    if (low.find(L"\\ramirodj\\stems\\") != std::wstring::npos) return true;
+    if (low.find(L"\\$recycle.bin\\") != std::wstring::npos) return true;
+    if (low.find(L"\\node_modules\\") != std::wstring::npos) return true;
+    if (low.find(L"\\.git\\") != std::wstring::npos) return true;
+    if (low.find(L"\\rea-backups\\") != std::wstring::npos) return true;
+    if (low.find(L"\\.venv\\") != std::wstring::npos) return true;
+    if (low.find(L"\\dj-elver-galarga-") != std::wstring::npos) return true;
+    return false;
+}
+
 void metaFromJson(const json& j, TrackMeta& m) {
     m.bpm = j.value("bpm", 0.0); m.gridAnchorSec = j.value("anchor", 0.0); m.analyzed = j.value("analyzed", false);
     m.gridSrc = m.analyzed ? 1 : 0;
@@ -455,6 +479,10 @@ void Library::load() {
 
 void Library::finishLoad() {
     std::lock_guard<std::recursive_mutex> lk(m_);
+    // Limpiar carpetas vigiladas que ya no existan en disco
+    folders_.erase(std::remove_if(folders_.begin(), folders_.end(), [](const std::wstring& f) {
+        return !dirExistsW(f) || isExcludedLibraryPath(f);
+    }), folders_.end());
     for (auto& t : tracks_) {
         t.fileName = toUtf8(fileNameOf(t.path));
         if (t.genre.empty() || t.genre == "Electronic" || t.genre == "Other") {
@@ -463,8 +491,9 @@ void Library::finishLoad() {
         }
         t.searchKey = foldForSearch(t.artist + " " + t.title + " " + t.fileName + " " + t.genre);
         uint64_t s; int64_t m;
-        t.missing = !fileStat(t.path, s, m);
+        t.missing = isExcludedLibraryPath(t.path) || !fileStat(t.path, s, m);
     }
+    relocateAndPurgeMissing(false);
     version_++;
 }
 
@@ -648,6 +677,160 @@ void Library::removeFolder(size_t i) {
     markDirty();
 }
 
+int Library::relocateAndPurgeMissing(bool purgeUnfound) {
+    std::lock_guard<std::recursive_mutex> lk(m_);
+    for (auto& t : tracks_) {
+        uint64_t s = 0; int64_t m = 0;
+        t.missing = isExcludedLibraryPath(t.path) || !fileStat(t.path, s, m);
+        if (!t.missing) {
+            t.size = s;
+            t.mtime = m;
+        }
+    }
+    auto lowerStr = [](std::string s) {
+        for (char& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        return s;
+    };
+    std::unordered_map<std::string, std::vector<size_t>> validByName;
+    for (size_t i = 0; i < tracks_.size(); ++i) {
+        if (!tracks_[i].missing) {
+            validByName[lowerStr(tracks_[i].fileName)].push_back(i);
+        }
+    }
+
+    auto hasValidCues = [](const TrackMeta& m) {
+        for (double c : m.hotCuesSec) if (c >= 0.0) return true;
+        return false;
+    };
+    auto mergeTrackMeta = [&](LibTrack& dst, const LibTrack& src) {
+        if (dst.title.empty() && !src.title.empty()) dst.title = src.title;
+        if (dst.artist.empty() && !src.artist.empty()) dst.artist = src.artist;
+        if (dst.meta.bpm <= 0.0 && src.meta.bpm > 0.0) {
+            dst.meta.bpm = src.meta.bpm;
+            dst.meta.gridAnchorSec = src.meta.gridAnchorSec;
+            dst.meta.analyzed = src.meta.analyzed;
+            dst.meta.gridSrc = src.meta.gridSrc;
+        }
+        if (dst.meta.durationSec <= 0.0 && src.meta.durationSec > 0.0) dst.meta.durationSec = src.meta.durationSec;
+        if (!hasValidCues(dst.meta) && hasValidCues(src.meta)) {
+            dst.meta.hotCuesSec = src.meta.hotCuesSec;
+            dst.meta.hotCueNames = src.meta.hotCueNames;
+            if (src.meta.cueSec > 0.0) dst.meta.cueSec = src.meta.cueSec;
+        }
+        if (dst.meta.key < 0 && src.meta.key >= 0) {
+            dst.meta.key = src.meta.key;
+            dst.meta.keyAnalyzed = src.meta.keyAnalyzed;
+            dst.meta.keySrc = src.meta.keySrc;
+        }
+        if ((dst.genre.empty() || dst.genre == "Electronic") && !src.genre.empty()) dst.genre = src.genre;
+        if (src.rating > dst.rating) dst.rating = src.rating;
+        if (src.playCount > dst.playCount) dst.playCount = src.playCount;
+        if (src.lastPlayed > dst.lastPlayed) dst.lastPlayed = src.lastPlayed;
+        if (src.firstSeen > 0 && (dst.firstSeen == 0 || src.firstSeen < dst.firstSeen)) dst.firstSeen = src.firstSeen;
+        dst.searchKey = foldForSearch(dst.artist + " " + dst.title + " " + dst.fileName + " " + dst.genre);
+    };
+
+    std::unordered_map<std::wstring, std::wstring> redir;
+    std::vector<bool> drop(tracks_.size(), false);
+    int changedCount = 0;
+
+    for (size_t i = 0; i < tracks_.size(); ++i) {
+        if (!tracks_[i].missing) continue;
+        const std::string key = lowerStr(tracks_[i].fileName);
+        auto it = validByName.find(key);
+        if (it != validByName.end() && !it->second.empty()) {
+            size_t bestIdx = it->second[0];
+            for (size_t candIdx : it->second) {
+                if (tracks_[candIdx].size == tracks_[i].size && tracks_[i].size > 0) {
+                    bestIdx = candIdx;
+                    break;
+                }
+            }
+            mergeTrackMeta(tracks_[bestIdx], tracks_[i]);
+            redir[tracks_[i].path] = tracks_[bestIdx].path;
+            drop[i] = true;
+            ++changedCount;
+        } else if (purgeUnfound || isExcludedLibraryPath(tracks_[i].path)) {
+            drop[i] = true;
+            ++changedCount;
+        }
+    }
+
+    if (changedCount > 0) {
+        std::vector<LibTrack> kept;
+        kept.reserve(tracks_.size());
+        for (size_t i = 0; i < tracks_.size(); ++i) {
+            if (!drop[i]) kept.push_back(std::move(tracks_[i]));
+        }
+        tracks_ = std::move(kept);
+        index_.clear();
+        for (size_t i = 0; i < tracks_.size(); ++i) index_[tracks_[i].path] = i;
+
+        for (auto& pl : playlists_) {
+            std::vector<std::wstring> newPaths;
+            newPaths.reserve(pl.paths.size());
+            for (auto& p : pl.paths) {
+                auto rit = redir.find(p);
+                std::wstring target = (rit != redir.end()) ? rit->second : p;
+                if (purgeUnfound && index_.find(target) == index_.end()) {
+                    uint64_t sz = 0; int64_t mt = 0;
+                    if (isExcludedLibraryPath(target) || !fileStat(target, sz, mt)) continue;
+                }
+                if (std::find(newPaths.begin(), newPaths.end(), target) == newPaths.end()) {
+                    newPaths.push_back(std::move(target));
+                }
+            }
+            pl.paths = std::move(newPaths);
+        }
+        markDirty();
+    }
+    return changedCount;
+}
+
+void Library::scanPcMusic(bool purgeUnfound) {
+    if (scanning_) return;
+    if (scanTh_.joinable()) scanTh_.join();
+    std::vector<std::wstring> roots;
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_);
+        folders_.erase(std::remove_if(folders_.begin(), folders_.end(), [](const std::wstring& f) {
+            return !dirExistsW(f) || isExcludedLibraryPath(f);
+        }), folders_.end());
+
+        wchar_t prof[MAX_PATH] = {};
+        if (GetEnvironmentVariableW(L"USERPROFILE", prof, MAX_PATH) > 0) {
+            const std::wstring up(prof);
+            const std::vector<std::wstring> autoDirs = {
+                up + L"\\Desktop\\musica2026",
+                up + L"\\Desktop\\Mi sesión",
+                up + L"\\Music",
+                up + L"\\Documents\\Soulseek Downloads",
+                up + L"\\Desktop",
+                up + L"\\Downloads"
+            };
+            for (const auto& ad : autoDirs) {
+                if (!dirExistsW(ad) || isExcludedLibraryPath(ad)) continue;
+                bool existsInFolders = false;
+                for (const auto& f : folders_) if (_wcsicmp(f.c_str(), ad.c_str()) == 0) existsInFolders = true;
+                if (!existsInFolders && (ad.find(L"musica2026") != std::wstring::npos || ad.find(L"Mi sesión") != std::wstring::npos ||
+                                         ad.find(L"\\Music") != std::wstring::npos || ad.find(L"Soulseek") != std::wstring::npos)) {
+                    folders_.push_back(ad);
+                    markDirty();
+                }
+                roots.push_back(ad);
+            }
+        }
+        for (const auto& f : folders_) {
+            bool seen = false;
+            for (const auto& r : roots) if (_wcsicmp(r.c_str(), f.c_str()) == 0) seen = true;
+            if (!seen && dirExistsW(f)) roots.push_back(f);
+        }
+    }
+    scanning_ = true;
+    scanned_ = 0;
+    scanTh_ = std::thread(&Library::scanThread, this, roots, purgeUnfound);
+}
+
 void Library::rescan() {
     if (scanning_) return;
     if (scanTh_.joinable()) scanTh_.join();
@@ -655,10 +838,10 @@ void Library::rescan() {
     { std::lock_guard<std::recursive_mutex> lk(m_); roots = folders_; }
     scanning_ = true;
     scanned_ = 0;
-    scanTh_ = std::thread(&Library::scanThread, this, roots);
+    scanTh_ = std::thread(&Library::scanThread, this, roots, false);
 }
 
-void Library::scanThread(std::vector<std::wstring> roots) {
+void Library::scanThread(std::vector<std::wstring> roots, bool purgeAfter) {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     std::vector<std::wstring> stack = roots;
     std::vector<LibTrack> batch;
@@ -671,6 +854,7 @@ void Library::scanThread(std::vector<std::wstring> roots) {
     while (!stack.empty() && !quit_) {
         const std::wstring dir = stack.back();
         stack.pop_back();
+        if (isExcludedLibraryPath(dir)) continue;
         WIN32_FIND_DATAW fd;
         HANDLE h = FindFirstFileExW((dir + L"\\*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
         if (h == INVALID_HANDLE_VALUE) continue;
@@ -678,12 +862,12 @@ void Library::scanThread(std::vector<std::wstring> roots) {
             const std::wstring name = fd.cFileName;
             if (name == L"." || name == L"..") continue;
             const std::wstring full = dir + L"\\" + name;
+            if (isExcludedLibraryPath(full)) continue;
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) stack.push_back(full);
+                if (!(fd.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM))) stack.push_back(full);
                 continue;
             }
             if (!isSupportedAudioExt(extensionLower(name))) continue;
-            // Saltar archivos ya conocidos y sin cambios.
             const uint64_t size = ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
             const int64_t mt = (int64_t)(((uint64_t)fd.ftLastWriteTime.dwHighDateTime << 32) | fd.ftLastWriteTime.dwLowDateTime);
             {
@@ -702,6 +886,10 @@ void Library::scanThread(std::vector<std::wstring> roots) {
         FindClose(h);
     }
     flush();
+    if (!quit_) {
+        relocateAndPurgeMissing(purgeAfter);
+        save();
+    }
     scanning_ = false;
 }
 

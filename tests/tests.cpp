@@ -1450,6 +1450,48 @@ static void testPro0140() {
     auto conf = mm.detectConflicts();
     CHECK(conf.size() == 1 && conf[0].actionA == rdj::MA_Play && conf[0].actionB == rdj::MA_Cue,
           "MidiManager::detectConflicts detecta colisión de nota/canal (%zu conflicto)", conf.size());
+
+    // 4. Relocalización inteligente de pistas movidas y purga de pistas borradas
+    {
+        const fs::path relDir = tmpDir() / "reloc_test";
+        fs::remove_all(relDir);
+        fs::create_directories(relDir / "old_folder");
+        fs::create_directories(relDir / "new_folder");
+        std::vector<int16_t> pcm(48000 * 2, 1000);
+        const fs::path oldFile = relDir / "old_folder" / "Tema_Movido_Test.wav";
+        const fs::path newFile = relDir / "new_folder" / "Tema_Movido_Test.wav";
+        const fs::path delFile = relDir / "old_folder" / "Tema_Borrado_Test.wav";
+        writeWav(oldFile, 48000, pcm);
+        writeWav(delFile, 48000, pcm);
+
+        Library rlib;
+        rlib.addFiles({oldFile.wstring(), delFile.wstring()});
+        if (LibTrack* lt = rlib.find(oldFile.wstring())) {
+            lt->meta.bpm = 128.0;
+            lt->meta.analyzed = true;
+            lt->meta.hotCuesSec[0] = 15.5;
+            lt->meta.hotCueNames[0] = "Drop Test";
+            lt->rating = 5;
+        }
+        const int plIdx = rlib.createPlaylist("Lista Reloc");
+        rlib.addToPlaylist(plIdx, {oldFile.wstring(), delFile.wstring()});
+
+        // Simular que el usuario movió Tema_Movido_Test.wav a new_folder y borró Tema_Borrado_Test.wav
+        fs::copy_file(oldFile, newFile);
+        fs::remove(oldFile);
+        fs::remove(delFile);
+        rlib.addFiles({newFile.wstring()});
+
+        const int cleaned = rlib.relocateAndPurgeMissing(true);
+        const LibTrack* moved = rlib.find(newFile.wstring());
+        const LibTrack* gone  = rlib.find(delFile.wstring());
+        CHECK(cleaned >= 2 && moved != nullptr && gone == nullptr,
+              "relocateAndPurgeMissing relocaliza la pista movida y elimina la borrada (cleaned=%d)", cleaned);
+        CHECK(moved && std::fabs(moved->meta.bpm - 128.0) < 1e-3 && std::fabs(moved->meta.hotCuesSec[0] - 15.5) < 1e-3 && moved->rating == 5,
+              "relocateAndPurgeMissing conserva BPM, Hot Cues y estrellas al mover de carpeta");
+        CHECK(rlib.playlists()[plIdx].paths.size() == 1 && rlib.playlists()[plIdx].paths[0] == newFile.wstring(),
+              "relocateAndPurgeMissing actualiza las rutas dentro de las playlists y limpia las borradas");
+    }
 }
 
 #include "rack_tests.inc"
