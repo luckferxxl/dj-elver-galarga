@@ -674,6 +674,26 @@ void App::pollMidi() {
         case MA_Vinyl: if(c.pressed) p.vinyl=!p.vinyl.load(); break;
         case MA_FxOn: if (c.pressed) p.fxOn = !p.fxOn.load(); break;
         case MA_DeckFxClear: if (c.pressed) clearEffectsOf(d); break;
+        case MA_StemVocalMute: case MA_StemDrumsMute: case MA_StemBassMute: case MA_StemInstMute:
+            if (c.pressed) {
+                const int si = c.action - MA_StemVocalMute;
+                p.stemMute[si] = !p.stemMute[si].load();
+            }
+            break;
+        case MA_StemVocalVol: case MA_StemDrumsVol: case MA_StemBassVol: case MA_StemInstVol: {
+            const int si = c.action - MA_StemVocalVol;
+            p.stemVol[si] = std::clamp(c.value * 1.5f, 0.f, 1.5f);
+            break;
+        }
+        case MA_StemVocalFx: case MA_StemDrumsFx: case MA_StemBassFx: case MA_StemInstFx: {
+            const int si = c.action - MA_StemVocalFx;
+            p.stemFx[si] = std::clamp(c.value, 0.f, 1.f);
+            break;
+        }
+        case MA_KeyUp: if (c.pressed) { p.keyShift = std::clamp(p.keyShift.load() + 1.f, -12.f, 12.f); p.keyLock = true; } break;
+        case MA_KeyDown: if (c.pressed) { p.keyShift = std::clamp(p.keyShift.load() - 1.f, -12.f, 12.f); p.keyLock = true; } break;
+        case MA_KeyReset: if (c.pressed) p.keyShift = 0.f; break;
+        case MA_Quantize: if (c.pressed) p.quantize = !p.quantize.load(); break;
         case MA_Volume: absolute(c, p.fader.load(), [&](float v) { p.fader = v; }); break;
         case MA_Gain: absolute(c, (p.gainDb.load() + 12.f) / 24.f, [&](float v) { p.gainDb = -12.f + 24.f * v; }); break;
         case MA_EqHigh: absolute(c, p.eqHigh.load(), [&](float v) { p.eqHigh = v; }); break;

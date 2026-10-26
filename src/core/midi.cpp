@@ -116,8 +116,24 @@ const std::vector<MidiActionInfo>& midiActions() {
         {"rackpad16", "Sampler: pad 16", MidiKind::Boton, false},
         {"quitarefectos", "Quitar todos los efectos y filtros", MidiKind::Boton, false},
         {"quitarefectosplato", "Quitar los efectos del plato", MidiKind::Boton, true},
+        {"stemvocalmute", "Stems: activar/silenciar VOZ (Pad 1)", MidiKind::Boton, true},
+        {"stemdrumsmute", "Stems: activar/silenciar BATERÍA (Pad 2)", MidiKind::Boton, true},
+        {"stembassmute", "Stems: activar/silenciar BAJO (Pad 3)", MidiKind::Boton, true},
+        {"steminstmute", "Stems: activar/silenciar INSTRUMENTOS (Pad 4)", MidiKind::Boton, true},
+        {"stemvocalvol", "Stems: volumen VOZ", MidiKind::Absoluto, true},
+        {"stemdrumsvol", "Stems: volumen BATERÍA", MidiKind::Absoluto, true},
+        {"stembassvol", "Stems: volumen BAJO", MidiKind::Absoluto, true},
+        {"steminstvol", "Stems: volumen INSTRUMENTOS", MidiKind::Absoluto, true},
+        {"stemvocalfx", "Stems: efecto VOZ", MidiKind::Absoluto, true},
+        {"stemdrumsfx", "Stems: efecto BATERÍA", MidiKind::Absoluto, true},
+        {"stembassfx", "Stems: efecto BAJO", MidiKind::Absoluto, true},
+        {"steminstfx", "Stems: efecto INSTRUMENTOS", MidiKind::Absoluto, true},
+        {"keyup", "Tono: subir +1 semitono", MidiKind::Boton, true},
+        {"keydown", "Tono: bajar -1 semitono", MidiKind::Boton, true},
+        {"keyreset", "Tono: restablecer a 0", MidiKind::Boton, true},
+        {"quantize", "Cuantizar (Q) encender/apagar", MidiKind::Boton, true},
     };
-    static_assert(MA_Count == 106, "la tabla de acciones MIDI y el enum deben coincidir");
+    static_assert(MA_Count == 122, "la tabla de acciones MIDI y el enum deben coincidir");
     return a;
 }
 
@@ -339,6 +355,22 @@ void MidiManager::clearBinding(int action, int deck) {
                                    [&](const MidiBinding& b) { return b.action == action && (!perDeck || b.deck == deck); }),
                     bindings_.end());
     save();
+}
+
+std::vector<MidiManager::Conflict> MidiManager::detectConflicts() const {
+    std::vector<Conflict> out;
+    for (size_t i = 0; i < bindings_.size(); ++i) {
+        for (size_t j = i + 1; j < bindings_.size(); ++j) {
+            const auto& a = bindings_[i];
+            const auto& b = bindings_[j];
+            if (a.type == b.type && a.channel == b.channel && a.data1 == b.data1 && a.shift == b.shift) {
+                if (a.action != b.action || a.deck != b.deck) {
+                    out.push_back({a.action, a.deck, b.action, b.deck, a.type, a.channel, a.data1, a.shift});
+                }
+            }
+        }
+    }
+    return out;
 }
 
 const MidiBinding* MidiManager::findBinding(int action, int deck) const {

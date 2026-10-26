@@ -29,7 +29,7 @@ if (-not $SinInstalador) {
     if ($LASTEXITCODE) { throw "Fallo al crear el instalador" }
 
     Paso "ZIP con el código fuente"
-    $zip = "dist\DJElverGalarga-codigo-fuente-0.13.0.zip"
+    $zip = "dist\DJElverGalarga-codigo-fuente-0.14.0.zip"
     if (Test-Path $zip) { Remove-Item $zip }
     $tmp = Join-Path $env:TEMP "DJElverGalarga-src"
     if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }

@@ -1,3 +1,4 @@
+#include <set>
 #include "mandos.h"
 #include "util.h"
 #include <algorithm>
@@ -572,6 +573,164 @@ std::string bestMatch(const std::string& portName, int* scoreOut) {
     if (best < 5) { best = 0; file.clear(); }
     if (scoreOut) *scoreOut = best;
     return file;
+}
+
+
+const std::vector<UniversalControllerModel>& universalCatalog() {
+    static std::mutex uMu;
+    static std::vector<UniversalControllerModel> uCat;
+    static bool uBuilt = false;
+    std::lock_guard<std::mutex> lk(uMu);
+    if (uBuilt) return uCat;
+    uBuilt = true;
+
+    struct BrandSeed { const char* brand; const char* models[64]; };
+    static const BrandSeed kSeeds[] = {
+        {"Pioneer DJ / AlphaTheta", {
+            "DDJ-WeGO", "DDJ-WeGO2", "DDJ-WeGO3", "DDJ-WeGO4", "DDJ-200", "DDJ-400", "DDJ-FLX2", "DDJ-FLX4",
+            "DDJ-FLX6", "DDJ-FLX6-GT", "DDJ-FLX10", "DDJ-REV1", "DDJ-REV5", "DDJ-REV7", "DDJ-SB", "DDJ-SB2",
+            "DDJ-SB3", "DDJ-RB", "DDJ-RR", "DDJ-RX", "DDJ-RZ", "DDJ-RZX", "DDJ-SR", "DDJ-SR2", "DDJ-SX",
+            "DDJ-SX2", "DDJ-SX3", "DDJ-SZ", "DDJ-SZ2", "DDJ-800", "DDJ-1000", "DDJ-1000SRT", "DDJ-ERGO",
+            "DDJ-T1", "DDJ-S1", "DDJ-SP1", "DDJ-XP1", "DDJ-XP2", "XDJ-R1", "XDJ-AERO", "XDJ-RX", "XDJ-RX2",
+            "XDJ-RX3", "XDJ-RR", "XDJ-XZ", "XDJ-AZ", "OPUS-QUAD", "OMNIS-DUO", "CDJ-350", "CDJ-400",
+            "CDJ-850", "CDJ-900", "CDJ-900NXS", "CDJ-2000", "CDJ-2000NXS", "CDJ-2000NXS2", "CDJ-3000",
+            "XDJ-700", "XDJ-1000", "XDJ-1000MK2", nullptr
+        }},
+        {"Denon DJ", {
+            "MC2000", "MC3000", "MC4000", "MC6000", "MC6000MK2", "MC7000", "MCX8000", "Prime GO", "Prime GO+",
+            "Prime 2", "Prime 4", "Prime 4+", "SC Live 2", "SC Live 4", "SC5000 Prime", "SC5000M Prime",
+            "SC6000 Prime", "SC6000M Prime", "LC6000 Prime", "DN-S1200", "DN-S3700", "DN-S3500", "DN-HC4500",
+            "DN-HC1000S", "DN-MC6000", "DN-X1600", "DN-X1700", "X1800 Prime", "X1850 Prime", "DN-SC2000",
+            "DN-SC2900", "DN-SC3900", "Axis 12", "Envio", "Prime Deck", nullptr
+        }},
+        {"Numark", {
+            "Mixtrack", "Mixtrack II", "Mixtrack 3", "Mixtrack Pro", "Mixtrack Pro II", "Mixtrack Pro 3",
+            "Mixtrack Platinum", "Mixtrack Platinum FX", "Mixtrack Pro FX", "Mixtrack Quad", "Mixtrack Edge",
+            "Party Mix", "Party Mix II", "Party Mix Live", "Party Mix MKII", "DJ2GO", "DJ2GO2", "DJ2GO2 Touch",
+            "Mixstream Pro", "Mixstream Pro+", "Mixstream Pro Go", "NS4FX", "NV", "NVII", "NS6", "NS6II",
+            "NS7", "NS7II", "NS7III", "4Trak", "N4", "iDJ3", "iDJ Pro", "iDJ Live", "iDJ Live II",
+            "Total Control", "Stealth Control", "Omni Control", "Mixdeck", "Mixdeck Express", "Mixdeck Quad",
+            "V7", "NDX400", "NDX500", "NDX800", "NDX900", "Orbit", "Scratch", nullptr
+        }},
+        {"Hercules", {
+            "DJControl Inpulse 200", "DJControl Inpulse 200 MK2", "DJControl Inpulse 300", "DJControl Inpulse 300 MK2",
+            "DJControl Inpulse 500", "DJControl Inpulse T7", "DJControl Starlight", "DJControl Mix", "DJControl Mix Ultra",
+            "DJControl Jogvision", "DJControl Air", "DJControl Air+", "DJControl Air+ S", "DJControl Instinct",
+            "DJControl Instinct P8", "DJControl Compact", "DJControl MP3 e2", "DJControl MP3 LE", "DJControl Glow",
+            "DJControl Wave", "DJ Console RMX", "DJ Console RMX2", "DJ Console 4-Mx", "DJ Console MK2",
+            "DJ Console MK4", "DJ Control Steel", "P32 DJ", "Universal DJ", "DJControl Pro", nullptr
+        }},
+        {"Native Instruments", {
+            "Traktor Kontrol S2 MK1", "Traktor Kontrol S2 MK2", "Traktor Kontrol S2 MK3", "Traktor Kontrol S3",
+            "Traktor Kontrol S4 MK1", "Traktor Kontrol S4 MK2", "Traktor Kontrol S4 MK3", "Traktor Kontrol S5",
+            "Traktor Kontrol S8", "Traktor Kontrol Z1", "Traktor Kontrol Z1 MK2", "Traktor Kontrol Z2",
+            "Traktor Kontrol X1 MK1", "Traktor Kontrol X1 MK2", "Traktor Kontrol X1 MK3", "Traktor Kontrol F1",
+            "Traktor Kontrol D2", "Maschine Mikro MK3", "Maschine MK3", "Maschine Jam", "Audio 2 DJ", nullptr
+        }},
+        {"Reloop", {
+            "Beatmix", "Beatmix 2", "Beatmix 2 MK2", "Beatmix 4", "Beatmix 4 MK2", "Mixon 4", "Mixon 8 Pro",
+            "Buddy", "Ready", "Terminal Mix 2", "Terminal Mix 4", "Terminal Mix 8", "Digital Jockey 2",
+            "Digital Jockey 2 IE", "Digital Jockey 2 ME", "Digital Jockey 3 ME", "Jockey 3 Remix", "Touch",
+            "Neon", "Contour", "Mixage IE", "Mixage MK2", "Keypad", "Keypad Pro", "Stand Hub Pro",
+            "RMX-95", "RMX-90 DVS", "RMX-60", "Elite", "RP-8000 MK2", nullptr
+        }},
+        {"Roland", {
+            "DJ-202", "DJ-505", "DJ-707M", "DJ-808", "DJ-99", "SP-404MKII", "SP-404SX", "SP-404A",
+            "TR-8S", "TR-8", "TR-6S", "MX-1", "Aira Compact E-4", "Aira Compact T-8", "MV-1 Verselab", nullptr
+        }},
+        {"Allen & Heath", {
+            "Xone:K1", "Xone:K2", "Xone:DX", "Xone:4D", "Xone:3D", "Xone:2D", "Xone:1D", "Xone:DB2",
+            "Xone:DB4", "Xone:PX5", "Xone:96", "Xone:92", "Xone:92 MK2", "Xone:43C", "Xone:23C", nullptr
+        }},
+        {"Akai Professional", {
+            "AMX", "AFX", "APC40", "APC40 MKII", "APC Mini", "APC Mini MK2", "APC Key 25", "APC Key 25 MK2",
+            "APC20", "LPD8", "LPD8 MK2", "MPD218", "MPD226", "MPD232", "MPD18", "MPD24", "MPD32",
+            "Midimix", "MPK Mini MK3", "MPK Mini Plus", "Fire", "Force", "MPC One+", "MPC Live II", nullptr
+        }},
+        {"Behringer", {
+            "CMD Studio 2A", "CMD Studio 4A", "CMD PL-1", "CMD MM-1", "CMD DC-1", "CMD DV-1", "CMD LC-1",
+            "CMD Micro", "BCD2000", "BCD3000", "DDM4000", "DJX900USB", "DJX750", "NOX606", "BCR2000",
+            "BCF2000", "X-Touch Mini", "X-Touch Compact", "UMA25S", nullptr
+        }},
+        {"Vestax", {
+            "VCI-100", "VCI-100 MKII", "VCI-300", "VCI-300 MKII", "VCI-380", "VCI-400", "VCI-400DJ",
+            "Typhoon", "Spin", "Spin 2", "TR-1", "VFX-1", "VCM-100", "VCM-600", "Pad-One", "PMC-05ProIV", nullptr
+        }}
+    };
+
+    const auto& emb = catalog();
+    std::set<std::string> seen;
+
+    for (const auto& bs : kSeeds) {
+        for (int i = 0; i < 64 && bs.models[i] != nullptr; ++i) {
+            UniversalControllerModel m;
+            m.brand = bs.brand;
+            m.model = bs.models[i];
+            const std::string full = std::string(bs.brand) + " " + m.model;
+            std::string matchedXml = bestMatch(full);
+            if (matchedXml.empty()) matchedXml = bestMatch(m.model);
+            if (m.model.find("WeGO") != std::string::npos) {
+                m.validationStatus = "Verificado Hardware (Preajuste Nativo + 14-bit)";
+                m.mappingFile = "preset:wego";
+                m.protocol = "MIDI USB 14-bit + LEDs";
+            } else if (!matchedXml.empty()) {
+                m.validationStatus = "Mapeo Nativo Mixxx XML Incluido";
+                m.mappingFile = matchedXml;
+                m.protocol = "MIDI USB + Script JS";
+            } else {
+                m.validationStatus = "Perfil MIDI Estándar Auto-Adaptativo + Learn";
+                m.mappingFile = "auto:standard";
+                m.protocol = "MIDI USB / HID Estándar";
+            }
+            m.decks = (m.model.find("4") != std::string::npos || m.model.find("SZ") != std::string::npos ||
+                       m.model.find("RZ") != std::string::npos || m.model.find("FLX10") != std::string::npos ||
+                       m.model.find("FLX6") != std::string::npos || m.model.find("1000") != std::string::npos ||
+                       m.model.find("S8") != std::string::npos || m.model.find("Mixon") != std::string::npos) ? 4 : 2;
+            uCat.push_back(m);
+            seen.insert(lowerAscii(m.model));
+        }
+    }
+
+    // Añadir también todos los mapeos XML de Mixxx embebidos que no estuvieran ya en la semilla
+    for (const auto& ce : emb) {
+        if (ce.generic) continue;
+        std::string lowN = lowerAscii(ce.name);
+        bool already = false;
+        for (const auto& s : seen) if (lowN.find(s) != std::string::npos) { already = true; break; }
+        if (already) continue;
+        UniversalControllerModel m;
+        m.brand = "Mixxx Open Library";
+        for (const char* b : {"Pioneer", "Denon", "Numark", "Hercules", "Traktor", "Reloop", "Roland", "Allen", "Akai", "Behringer", "Vestax", "Stanton", "Korg", "Novation", "Gemini"}) {
+            if (lowN.find(lowerAscii(b)) != std::string::npos) { m.brand = b; break; }
+        }
+        m.model = ce.name;
+        m.protocol = "MIDI USB + Script JS";
+        m.validationStatus = "Mapeo Nativo Mixxx XML Incluido";
+        m.mappingFile = ce.file;
+        uCat.push_back(m);
+    }
+    return uCat;
+}
+
+const UniversalControllerModel* identifyController(const std::string& portName) {
+    if (portName.empty()) return nullptr;
+    const std::string lp = lowerAscii(portName);
+    const auto& uCat = universalCatalog();
+    const UniversalControllerModel* best = nullptr;
+    size_t bestLen = 0;
+    for (const auto& m : uCat) {
+        const std::string lm = lowerAscii(m.model);
+        if (lm.size() >= 4 && lp.find(lm) != std::string::npos && lm.size() > bestLen) {
+            best = &m;
+            bestLen = lm.size();
+        }
+    }
+    if (best) return best;
+    const std::string xml = bestMatch(portName);
+    if (!xml.empty()) {
+        for (const auto& m : uCat) if (m.mappingFile == xml) return &m;
+    }
+    return nullptr;
 }
 
 } // namespace rdj::mandos

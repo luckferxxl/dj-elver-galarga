@@ -49,6 +49,11 @@ enum MidiAct : int {
     MA_FxClearAll,
     // 0.11.3: quitar los efectos de un plato (por plato; se asigna como las del rack en mandos con mapeo de Mixxx).
     MA_DeckFxClear,
+    // 0.14.0 Pro: Stems en tiempo real por plato + control de tono y cuantización desde la controladora física
+    MA_StemVocalMute, MA_StemDrumsMute, MA_StemBassMute, MA_StemInstMute,
+    MA_StemVocalVol, MA_StemDrumsVol, MA_StemBassVol, MA_StemInstVol,
+    MA_StemVocalFx, MA_StemDrumsFx, MA_StemBassFx, MA_StemInstFx,
+    MA_KeyUp, MA_KeyDown, MA_KeyReset, MA_Quantize,
     MA_Count
 };
 inline bool isRackAction(int a) { return a >= MA_RackFxOff && a < MA_Count; }
@@ -123,6 +128,8 @@ public:
     void clearBinding(int action, int deck);
     void assign(const MidiBinding& b);  // sustituye asignaciones en conflicto y guarda
     const MidiBinding* findBinding(int action, int deck) const;
+    struct Conflict { int actionA, deckA, actionB, deckB; uint8_t type, channel, data1; bool shift; };
+    std::vector<Conflict> detectConflicts() const;
 
     // Procesa los mensajes pendientes. Devuelve las órdenes resultantes.
     std::vector<MidiCommand> poll();

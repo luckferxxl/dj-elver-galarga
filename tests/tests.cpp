@@ -1384,6 +1384,74 @@ static void testMandos() {
         CHECK(rdj::mandos::bestMatch(port).empty(), "puerto «%s» no se confunde con otro mando", port);
 }
 
+
+static void testPro0140() {
+    std::printf("== 0.14.0 Pro: Stems en tiempo real por plato, catálogo universal (>350 mandos) y detector de conflictos ==\n");
+    // 1. DeckStemProcessor: reconstrucción exacta en unidad y aislamiento de Bajo / Voz
+    rdj::DeckStemProcessor sp;
+    sp.prepare(48000.0);
+    constexpr int N = 2048;
+    std::vector<float> origL(N), origR(N), L(N), R(N);
+    for (int i = 0; i < N; ++i) {
+        const double t = (double)i / 48000.0;
+        const float bass = 0.5f * (float)std::sin(2.0 * rdj::kPi * 75.0 * t);
+        const float high = 0.3f * (float)std::sin(2.0 * rdj::kPi * 3200.0 * t);
+        origL[i] = L[i] = bass + high;
+        origR[i] = R[i] = bass - high;
+    }
+    const float unityG[4] = {1.f, 1.f, 1.f, 1.f};
+    const float zeroFx[4] = {0.f, 0.f, 0.f, 0.f};
+    float peaks[4] = {};
+    sp.process(L.data(), R.data(), N, unityG, zeroFx, peaks);
+    float maxDiff = 0.f;
+    for (int i = 0; i < N; ++i) {
+        maxDiff = std::max(maxDiff, std::max(std::fabs(L[i] - origL[i]), std::fabs(R[i] - origR[i])));
+    }
+    CHECK(maxDiff < 1e-5f, "DeckStemProcessor en unidad reconstruye la señal original sin pérdida (diff=%g)", maxDiff);
+
+    // Silenciar todo salvo Bajo ([2]): debe conservar el grave de 75 Hz y atenuar el agudo de 3200 Hz
+    sp.reset();
+    L = origL; R = origR;
+    const float bassOnlyG[4] = {0.f, 0.f, 1.f, 0.f};
+    sp.process(L.data(), R.data(), N, bassOnlyG, zeroFx, peaks);
+    double rmsBassOut = 0.0;
+    bool finiteOk = true;
+    for (int i = N / 2; i < N; ++i) {
+        if (!std::isfinite(L[i]) || !std::isfinite(R[i])) finiteOk = false;
+        rmsBassOut += L[i] * L[i];
+    }
+    rmsBassOut = std::sqrt(rmsBassOut / (N / 2));
+    CHECK(finiteOk && rmsBassOut > 0.12 && rmsBassOut < 0.45, "DeckStemProcessor aísla el stem de Bajo sin NaN/Inf (rms=%.3f)", rmsBassOut);
+
+    // 2. Catálogo Universal de Controladoras DJ (>350 modelos y las 11 marcas presentes)
+    const auto& ucat = rdj::mandos::universalCatalog();
+    CHECK(ucat.size() >= 350, "Catálogo universal contiene >= 350 modelos de controladoras (%zu registrados)", ucat.size());
+    const char* reqBrands[] = {
+        "Pioneer DJ / AlphaTheta", "Denon DJ", "Numark", "Hercules", "Native Instruments",
+        "Reloop", "Roland", "Allen & Heath", "Akai Professional", "Behringer", "Vestax"
+    };
+    for (const char* b : reqBrands) {
+        int cnt = 0;
+        for (const auto& m : ucat) if (m.brand == b) ++cnt;
+        CHECK(cnt >= 10, "Marca «%s» presente en el catálogo universal (%d modelos)", b, cnt);
+    }
+    const auto* wego = rdj::mandos::identifyController("Pioneer DDJ-WeGO");
+    const auto* flx4 = rdj::mandos::identifyController("MIDIIN2 (DDJ-FLX4)");
+    const auto* mc7000 = rdj::mandos::identifyController("Denon DJ MC7000");
+    CHECK(wego && wego->model == "DDJ-WeGO", "identifyController reconoce DDJ-WeGO");
+    CHECK(flx4 && flx4->model == "DDJ-FLX4", "identifyController reconoce DDJ-FLX4");
+    CHECK(mc7000 && mc7000->model.find("MC7000") != std::string::npos, "identifyController reconoce Denon MC7000");
+
+    // 3. Detector de conflictos MIDI
+    rdj::MidiManager mm;
+    mm.bindings().clear();
+    mm.bindings().push_back({rdj::MA_Play, 0, 0x9, 0, 11, 0, false, false, false});
+    mm.bindings().push_back({rdj::MA_Cue,  0, 0x9, 0, 11, 0, false, false, false});
+    auto conf = mm.detectConflicts();
+    CHECK(conf.size() == 1 && conf[0].actionA == rdj::MA_Play && conf[0].actionB == rdj::MA_Cue,
+          "MidiManager::detectConflicts detecta colisión de nota/canal (%zu conflicto)", conf.size());
+}
+
 #include "rack_tests.inc"
 
 int main(int argc, char** argv) {
@@ -1437,6 +1505,7 @@ int main(int argc, char** argv) {
     testKeysAndVdj();
     testBrowserAndCovers();
     testMandos();
+    testPro0140();
     testRack();
     testDevices(false);
     if (real) testDevices(true);

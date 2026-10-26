@@ -40,6 +40,10 @@ struct DeckParams {
     std::atomic<float> fxBeats{1.f};
     std::atomic<bool> keyLock{false};     // mantener el tono al cambiar el tempo
     std::atomic<float> keyShift{0.f};     // semitonos (-6..+6)
+    // 0.14.0 Pro: Stems en tiempo real por plato ([0]=Voz, [1]=Batería, [2]=Bajo, [3]=Instrumentos)
+    std::array<std::atomic<bool>, 4> stemMute{};
+    std::array<std::atomic<float>, 4> stemVol{1.f, 1.f, 1.f, 1.f};
+    std::array<std::atomic<float>, 4> stemFx{0.f, 0.f, 0.f, 0.f};
     // SYNC: lo mantiene el motor bloque a bloque (tempo y fase siguen al otro plato,
     // incluidos sus empujones). Con SYNC el motor escribe "pitch".
     std::atomic<int> syncTo{-1};          // plato al que sigue; -1 = sin SYNC
@@ -61,6 +65,7 @@ struct DeckStatus {
     std::atomic<bool> rolling{false}, slipActive{false};
     std::atomic<double> slipFrames{0};
     std::atomic<float> peakL{0}, peakR{0};
+    std::array<std::atomic<float>, 4> stemPeak{};
     std::atomic<uint32_t> loadedGen{0};
     std::atomic<float> syncError{0};      // desfase que corrige el SYNC (pulsos, + = adelantado)
     std::atomic<bool> syncLocked{false};  // SYNC activo y en fase
@@ -201,6 +206,7 @@ private:
     float inL_[kMaxBlock], inR_[kMaxBlock], gArr_[kMaxBlock], tArr_[kMaxBlock], tailL_[kMaxBlock], tailR_[kMaxBlock], dirL_[kMaxBlock], dirR_[kMaxBlock];
     // Cadena de procesado.
     ThreeBandEq eq_;
+    DeckStemProcessor stemProc_;
     ColorFx color_;              // 0.11: la ruleta FILTER del canal, con sus colores (antes, solo DjFilter)
     FxSlot fx_;
     StUnit fxUnit_;              // 0.11: efectos nuevos del plato (riser, spiral, sidechain…)

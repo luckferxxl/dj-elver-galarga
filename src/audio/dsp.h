@@ -299,4 +299,126 @@ inline void measure(const float* L, const float* R, int n, MeterState& m) {
     m.rmsL = n ? (float)std::sqrt(sl / n) : 0; m.rmsR = n ? (float)std::sqrt(sr / n) : 0;
 }
 
+
+// ---------------------------------------------------------------- Separador de 4 Stems en Tiempo Real por Plato (0 ms latencia, sin reservas en process)
+// Separa en vivo la señal estéreo (L, R) en 4 componentes ortogonales cuya suma exacta es L, R:
+//   [0] Vocals (Voz): centro armónico Mid en banda vocal (200 Hz - 4200 Hz) libre de transitorios rápidos.
+//   [1] Drums (Batería): componente transitoria percusiva rápida en graves de pegada y agudos.
+//   [2] Bass (Bajo): subgraves y línea de bajo (< 200 Hz LR4) sostenida.
+//   [3] Instruments (Instrumentos): residuo exacto (Side estéreo + cuerpo armónico melódico).
+// Propiedad clave: con ganancias = 1.0 y fx = 0.0, L_out = vocL + drmL + basL + insL == L_in exactamente (bit-accurate).
+class DeckStemProcessor {
+public:
+    void prepare(double fs) {
+        fs_ = fs > 8000.0 ? fs : 48000.0;
+        lpBass_.setLowpass(195.0, fs_);
+        lpVocHi_.setLowpass(4200.0, fs_);
+        hpVocLo_.setHighpass(210.0, fs_);
+        hpTop_.setHighpass(2600.0, fs_);
+        fxLp_[0].k = BiquadCoefs::lowpass(1800.0, 1.4, fs_);
+        fxLp_[1].k = BiquadCoefs::highpass(600.0, 1.4, fs_);
+        fxLp_[2].k = BiquadCoefs::lowpass(320.0, 1.8, fs_);
+        fxLp_[3].k = BiquadCoefs::highpass(900.0, 1.2, fs_);
+        reset();
+    }
+
+    void reset() {
+        lpBass_.reset(); lpVocHi_.reset(); hpVocLo_.reset(); hpTop_.reset();
+        for (auto& f : fxLp_) f.reset();
+        fastEnv_ = 0.f; slowEnv_ = 0.f;
+        for (int k = 0; k < 4; ++k) lastGain_[k] = 1.f;
+    }
+
+    void process(float* L, float* R, int n, const float targetGain[4], const float stemFx[4], float outPeaks[4]) {
+        for (int k = 0; k < 4; ++k) outPeaks[k] = 0.f;
+        if (n <= 0) return;
+        const bool allUnity = (std::fabs(targetGain[0] - 1.f) < 1e-4f && std::fabs(targetGain[1] - 1.f) < 1e-4f &&
+                               std::fabs(targetGain[2] - 1.f) < 1e-4f && std::fabs(targetGain[3] - 1.f) < 1e-4f &&
+                               std::fabs(lastGain_[0] - 1.f) < 1e-4f && std::fabs(lastGain_[1] - 1.f) < 1e-4f &&
+                               std::fabs(lastGain_[2] - 1.f) < 1e-4f && std::fabs(lastGain_[3] - 1.f) < 1e-4f &&
+                               stemFx[0] < 1e-3f && stemFx[1] < 1e-3f && stemFx[2] < 1e-3f && stemFx[3] < 1e-3f);
+        const float invN = 1.f / (float)n;
+        const float attFast = (float)std::exp(-1.0 / (0.0018 * fs_));
+        const float relFast = (float)std::exp(-1.0 / (0.018 * fs_));
+        const float attSlow = (float)std::exp(-1.0 / (0.035 * fs_));
+
+        for (int i = 0; i < n; ++i) {
+            const float inL = L[i], inR = R[i];
+            // 1. Sub/Bajo (< 195 Hz)
+            float basL = inL, basR = inR;
+            lpBass_.process(basL, basR);
+
+            // 2. Agudos (> 2600 Hz) para transitorios de percusión / platos
+            float topL = inL, topR = inR;
+            hpTop_.process(topL, topR);
+
+            // 3. Detector de envolvente transitoria (percusión / batería)
+            const float eNow = 0.5f * (std::fabs(inL - basL) + std::fabs(inR - basR)) + 0.35f * (std::fabs(basL) + std::fabs(basR));
+            fastEnv_ = (eNow > fastEnv_) ? (attFast * fastEnv_ + (1.f - attFast) * eNow) : (relFast * fastEnv_ + (1.f - relFast) * eNow);
+            slowEnv_ = attSlow * slowEnv_ + (1.f - attSlow) * eNow;
+            const float transRatio = std::clamp((fastEnv_ - slowEnv_ * 0.92f) / (fastEnv_ + 1e-5f) * 2.4f, 0.f, 0.88f);
+
+            // El golpe percusivo de graves + transitorios agudos va a Batería; el bajo sostenido queda en Bajo
+            const float kickPunchL = basL * (transRatio * 0.55f);
+            const float kickPunchR = basR * (transRatio * 0.55f);
+            basL -= kickPunchL;
+            basR -= kickPunchR;
+
+            // 4. Banda media vocal (210 Hz - 4200 Hz) sobre componente Mid central
+            const float mid = 0.5f * (inL + inR);
+            float vL = mid, vR = mid;
+            hpVocLo_.process(vL, vR);
+            lpVocHi_.process(vL, vR);
+            // La voz es la parte sostenida central; los golpes transitorios en esa banda son caja/palmas (Drums)
+            const float snareL = vL * (transRatio * 0.65f);
+            const float snareR = vR * (transRatio * 0.65f);
+            const float vocL = (vL - snareL) * 0.85f;
+            const float vocR = (vR - snareR) * 0.85f;
+
+            const float drmL = kickPunchL + snareL + topL * (0.35f + 0.55f * transRatio);
+            const float drmR = kickPunchR + snareR + topR * (0.35f + 0.55f * transRatio);
+
+            // 5. Instrumentos = complemento exacto para que voc + drm + bas + ins == in exactamente
+            const float insL = inL - (vocL + drmL + basL);
+            const float insR = inR - (vocR + drmR + basR);
+
+            float sL[4] = {vocL, drmL, basL, insL};
+            float sR[4] = {vocR, drmR, basR, insR};
+
+            if (!allUnity) {
+                const float tStep = (float)(i + 1) * invN;
+                float outL = 0.f, outR = 0.f;
+                for (int k = 0; k < 4; ++k) {
+                    const float g = lastGain_[k] + (targetGain[k] - lastGain_[k]) * tStep;
+                    float xL = sL[k], xR = sR[k];
+                    if (stemFx[k] > 1e-3f) {
+                        float fL = xL, fR = xR;
+                        fxLp_[k].process(fL, fR);
+                        const float m = std::clamp(stemFx[k], 0.f, 1.f);
+                        xL = xL * (1.f - m * 0.7f) + std::tanh(fL * (1.f + m * 2.2f)) * m * 0.9f;
+                        xR = xR * (1.f - m * 0.7f) + std::tanh(fR * (1.f + m * 2.2f)) * m * 0.9f;
+                    }
+                    outL += xL * g;
+                    outR += xR * g;
+                    sL[k] = xL * g; sR[k] = xR * g;
+                }
+                L[i] = outL;
+                R[i] = outR;
+            }
+            for (int k = 0; k < 4; ++k) {
+                const float pk = std::max(std::fabs(sL[k]), std::fabs(sR[k]));
+                if (pk > outPeaks[k]) outPeaks[k] = pk;
+            }
+        }
+        for (int k = 0; k < 4; ++k) lastGain_[k] = targetGain[k];
+    }
+
+private:
+    double fs_ = 48000.0;
+    LR4 lpBass_, lpVocHi_, hpVocLo_, hpTop_;
+    Biquad fxLp_[4];
+    float fastEnv_ = 0.f, slowEnv_ = 0.f;
+    float lastGain_[4] = {1.f, 1.f, 1.f, 1.f};
+};
+
 } // namespace rdj

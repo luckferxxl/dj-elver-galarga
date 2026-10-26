@@ -2,7 +2,7 @@
 
 Programa de DJ para Windows (C++, Dear ImGui + miniaudio), pensado para el mando **Pioneer DDJ-WeGO**, aunque incluye mapeos para muchos otros mandos MIDI.
 
-Versión: **0.13.0 Super**
+Versión: **0.14.0 Pro**
 
 ## Compilar
 

@@ -2,8 +2,8 @@
 IDI_APP ICON "djelvergalarga.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,13,0,0
-PRODUCTVERSION 0,13,0,0
+FILEVERSION 0,14,0,0
+PRODUCTVERSION 0,14,0,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -13,8 +13,8 @@ BEGIN
     BEGIN
       VALUE "FileDescription", "DJ Elver Galarga"
       VALUE "ProductName", "DJ Elver Galarga"
-      VALUE "FileVersion", "0.13.0"
-      VALUE "ProductVersion", "0.13.0"
+      VALUE "FileVersion", "0.14.0"
+      VALUE "ProductVersion", "0.14.0"
       VALUE "OriginalFilename", "DJElverGalarga.exe"
     END
   END

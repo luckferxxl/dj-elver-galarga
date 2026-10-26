@@ -1,8 +1,16 @@
-# DJ Elver Galarga 0.13.0 Super
+# DJ Elver Galarga 0.14.0 Pro
 
 Aplicación de DJ para Windows 10/11 (64 bits): dos platos, mezclador, biblioteca, grabación de la mezcla y MIDI.
 
 Es **software libre** (licencia GPL versión 2 o posterior, ver `COPYING.txt`); el código fuente va con cada versión.
+
+## Novedades de la 0.14.0 Pro: Stems en Tiempo Real por Plato, Catálogo Universal de +365 Controladoras y Detector de Conflictos MIDI
+- **Separación de 4 Stems en Tiempo Real en cada Plato (0 ms de latencia, pestaña `STEMS` en Plato A y Plato B)**:
+  - Aísla o silencia al instante **🎤 VOZ**, **🥁 BATERÍA**, **🎸 BAJO** y **🎹 INSTRUMENTOS** sobre cualquier canción que esté sonando, sin esperar al separador offline, con reconstrucción bit-exacta al 100 % cuando los 4 están activos.
+  - Control individual de **Volumen (0–150 %)** y **Efecto/Filtro por Stem** (clic derecho en cada stem), más botones rápidos **SOLO VOZ (Acapella)**, **SOLO BASE (Instrumental)** y **SOLO BATERÍA + BAJO**, además del modo **SEPARADOR IA (Demucs 4/6 pistas en caché)**.
+- **Catálogo Universal Plug-and-Play de +365 Modelos de Controladoras DJ (11 marcas)**:
+  - Cubre Pioneer DJ / AlphaTheta, Denon DJ, Numark, Hercules, Native Instruments (Traktor), Reloop, Roland, Allen & Heath (Xone), Akai Professional, Behringer y Vestax, con buscador por marca/modelo, estado de validación transparente y 16 nuevas acciones MIDI para controlar los Stems desde los pads físicos con retroalimentación LED.
+- **Detector Automático de Conflictos MIDI** en la pestaña de Asignaciones.
 
 ## Novedades de la 0.13.0 Super: ElverKey Studio / Mix Lab integrado a pantalla completa
 - **ELVERKEY / MIX LAB integrado dentro del programa (a pantalla completa o en ventana flotante)**:

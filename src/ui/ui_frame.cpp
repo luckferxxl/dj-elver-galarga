@@ -1507,12 +1507,14 @@ void App::drawDeckTabs(int d, float x, float y, float w, float h) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const bool has = dk.track != nullptr;
     const float sp = 6 * s;
-    // Selector de modo (control segmentado)
-    const char* names[8] = {"CUES", "LOOP", "SALTO", "REJILLA", "TONO", "FX", "ROLL", "VINILO"};
+    // Selector de modo (control segmentado, incluye 0.14.0 Pro: STEMS en tiempo real)
+    const char* names[9] = {"CUES", "LOOP", "SALTO", "REJILLA", "TONO", "FX", "ROLL", "VINILO", "STEMS"};
     const float th = 22 * s;
-    const float tw = w / 8.f;
+    const float tw = w / 9.f;
     dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + th), col::Bg, 6 * s);
-    for (int i = 0; i < 8; ++i) {
+    const bool anyStemMod = p.stemMute[0].load() || p.stemMute[1].load() || p.stemMute[2].load() || p.stemMute[3].load() ||
+                            p.stemFx[0].load() > 0.01f || p.stemFx[1].load() > 0.01f || p.stemFx[2].load() > 0.01f || p.stemFx[3].load() > 0.01f;
+    for (int i = 0; i < 9; ++i) {
         const ImVec2 ta(x + i * tw, y), tb(x + (i + 1) * tw, y + th);
         ImGui::SetCursorScreenPos(ta);
         ImGui::PushID(i);
@@ -1520,10 +1522,9 @@ void App::drawDeckTabs(int d, float x, float y, float w, float h) {
         ImGui::PopID();
         const bool on = padMode_[d] == i, hov = ImGui::IsItemHovered();
         if (on) dl->AddRectFilled(ImVec2(ta.x + 2 * s, ta.y + 2 * s), ImVec2(tb.x - 2 * s, tb.y - 2 * s), col::mix(col::Panel2, acc, 0.22f), 5 * s);
-        CenterText(dl, ta, tb, on ? col::Text : hov ? col::mix(col::TextDim, col::Text, 0.5f) : col::TextDim, names[i], fontHead, 13 * s);
-        // 0.11.3: punto ámbar en la pestaña que tiene algo puesto (efecto del plato en FX, REV en VINILO).
-        const bool lit = (i == 5 && p.fxOn.load() && p.fxType.load() != 0) || (i == 7 && p.reverse.load());
-        if (lit) dl->AddCircleFilled(ImVec2(tb.x - 7 * s, ta.y + 6 * s), 3.2f * s, col::Amber);
+        CenterText(dl, ta, tb, on ? col::Text : hov ? col::mix(col::TextDim, col::Text, 0.5f) : (i == 8 ? col::DeckA : col::TextDim), names[i], fontHead, 12.2f * s);
+        const bool lit = (i == 5 && p.fxOn.load() && p.fxType.load() != 0) || (i == 7 && p.reverse.load()) || (i == 8 && anyStemMod);
+        if (lit) dl->AddCircleFilled(ImVec2(tb.x - 6 * s, ta.y + 6 * s), 3.2f * s, col::Amber);
     }
     y += th + sp;
     const float rest = h - th - sp;
@@ -1550,6 +1551,61 @@ void App::drawDeckTabs(int d, float x, float y, float w, float h) {
         break;
     }
     case 7: ImGui::BeginDisabled(!has); drawPerformance(d); ImGui::EndDisabled(); break;
+    case 8: {  // 0.14.0 Pro: Separación de 4 Stems en tiempo real por plato (VOZ, BATERÍA, BAJO, INSTRUM.)
+        const char* stNames[4] = {"🎤 VOZ", "🥁 BATERÍA", "🎸 BAJO", "🎹 INSTRUM."};
+        const ImU32 stCols[4] = {col::Violet, col::Amber, col::Red, col::Green};
+        const float sw4 = (w - 3 * sp) / 4.f;
+        for (int k = 0; k < 4; ++k) {
+            if (k > 0) ImGui::SameLine(0, sp);
+            ImGui::PushID(k + 400);
+            const bool active = !p.stemMute[k].load();
+            const float volPct = p.stemVol[k].load() * 100.f;
+            char sLbl[48];
+            std::snprintf(sLbl, sizeof sLbl, active ? "%s  %.0f%%" : "%s  [MUTE]", stNames[k], volPct);
+            const ImVec2 sp0 = ImGui::GetCursorScreenPos();
+            if (NeonButton(sLbl, stCols[k], active, ImVec2(sw4, rowB), true, fontHead, 12.5f * s)) {
+                p.stemMute[k] = active;
+            }
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("stem_detail_pop");
+            const float pk = std::clamp(st.stemPeak[k].load() * 1.4f, 0.f, 1.f);
+            if (pk > 0.01f && active) {
+                dl->AddRectFilled(ImVec2(sp0.x + 4 * s, sp0.y + rowB - 3.5f * s),
+                                  ImVec2(sp0.x + 4 * s + (sw4 - 8 * s) * pk, sp0.y + rowB - 1.5f * s), stCols[k], 1.5f * s);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s (%s)\nClic izquierdo: activar / silenciar en tiempo real (0 ms latencia)\nClic derecho: ajustar volumen (0-150%%) y efecto individual del stem",
+                                  stNames[k], active ? "ACTIVO" : "SILENCIADO");
+            }
+            if (ImGui::BeginPopup("stem_detail_pop")) {
+                ImGui::TextColored(toVec4(stCols[k]), "%s · CONTROL INDIVIDUAL", stNames[k]);
+                float v = p.stemVol[k].load() * 100.f;
+                if (ImGui::SliderFloat("Volumen (%)", &v, 0.f, 150.f, "%.0f %%")) p.stemVol[k] = v / 100.f;
+                float fxv = p.stemFx[k].load() * 100.f;
+                if (ImGui::SliderFloat("Efecto / Filtro Stem (%)", &fxv, 0.f, 100.f, "%.0f %%")) p.stemFx[k] = fxv / 100.f;
+                if (ImGui::Button("Restablecer este stem")) { p.stemMute[k] = false; p.stemVol[k] = 1.f; p.stemFx[k] = 0.f; }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+        }
+        if (tworows) {
+            if (NeonButton("SOLO VOZ (Acapella)", col::Violet, !p.stemMute[0].load() && p.stemMute[1].load() && p.stemMute[2].load() && p.stemMute[3].load(), ImVec2(sw4, rowB), true, fontHead, 11.5f * s)) {
+                p.stemMute[0] = false; p.stemMute[1] = true; p.stemMute[2] = true; p.stemMute[3] = true;
+            }
+            ImGui::SameLine(0, sp);
+            if (NeonButton("SOLO BASE (Instrumental)", col::Green, p.stemMute[0].load() && !p.stemMute[1].load() && !p.stemMute[2].load() && !p.stemMute[3].load(), ImVec2(sw4, rowB), true, fontHead, 11.5f * s)) {
+                p.stemMute[0] = true; p.stemMute[1] = false; p.stemMute[2] = false; p.stemMute[3] = false;
+            }
+            ImGui::SameLine(0, sp);
+            if (NeonButton("SOLO BATERÍA + BAJO", col::Amber, p.stemMute[0].load() && !p.stemMute[1].load() && !p.stemMute[2].load() && p.stemMute[3].load(), ImVec2(sw4, rowB), true, fontHead, 11.5f * s)) {
+                p.stemMute[0] = true; p.stemMute[1] = false; p.stemMute[2] = false; p.stemMute[3] = true;
+            }
+            ImGui::SameLine(0, sp);
+            if (NeonButton("RESTABLECER 4 STEMS", acc, !anyStemMod, ImVec2(sw4, rowB), true, fontHead, 11.5f * s)) {
+                for (int k = 0; k < 4; ++k) { p.stemMute[k] = false; p.stemVol[k] = 1.f; p.stemFx[k] = 0.f; }
+            }
+        }
+        break;
+    }
     case 0: {  // Hot cues 1-8 (en una fila de 8 si no caben dos)
         const int perRow = tworows ? 4 : 8;
         const float hw = (w - (perRow - 1) * sp) / perRow;
@@ -1982,9 +2038,9 @@ void App::drawStatusBar(ImVec2 a, ImVec2 b) {
         std::snprintf(midi, sizeof midi, "  ·  Mando: %s%s", name.c_str(), midi_.shiftHeld() ? " [SHIFT]" : "");
     }
     if (recorder_.active())
-        std::snprintf(r, sizeof r, "● Grabando %s%s  ·  DJ Elver Galarga 0.13.0 Super", formatTime(recorder_.seconds(), false).c_str(), engine_.status.recDropped.load() ? " · ¡pérdidas!" : "");
+        std::snprintf(r, sizeof r, "● Grabando %s%s  ·  DJ Elver Galarga 0.14.0 Pro", formatTime(recorder_.seconds(), false).c_str(), engine_.status.recDropped.load() ? " · ¡pérdidas!" : "");
     else
-        std::snprintf(r, sizeof r, "%s · %s · %u Hz · %.1f ms · CPU %d %%%s  ·  DJ Elver Galarga 0.13.0 Super", st.running ? st.deviceName.c_str() : "Sin audio", st.backend.c_str(),
+        std::snprintf(r, sizeof r, "%s · %s · %u Hz · %.1f ms · CPU %d %%%s  ·  DJ Elver Galarga 0.14.0 Pro", st.running ? st.deviceName.c_str() : "Sin audio", st.backend.c_str(),
                       st.sampleRate, latMs, (int)std::lround(engine_.status.cpuLoad.load() * 100), midi);
     const std::string rs = ellipsize(r, (b.x - a.x) * 0.45f, f, fs);
     const float rw = f->CalcTextSizeA(fs, FLT_MAX, 0, rs.c_str()).x;
@@ -2206,6 +2262,22 @@ void App::drawMidiAssignments() {
     const float s = S();
     const auto& acts = midiActions();
     ImGui::TextDisabled("Las filas se iluminan al usar el control. «Aprender»: pulsa y mueve el control del mando.");
+    {
+        const auto conflicts = midi_.detectConflicts();
+        if (!conflicts.empty()) {
+            const auto& acts = midiActions();
+            ImGui::TextColored(toVec4(col::Red), "⚠ %zu conflicto(s) de asignación detectados (dos acciones comparten el mismo botón/CC):", conflicts.size());
+            for (size_t ci = 0; ci < std::min<size_t>(3, conflicts.size()); ++ci) {
+                const auto& cf = conflicts[ci];
+                ImGui::TextDisabled("  • %s (%s) choca con %s (%s) en canal %d, nota/CC %d",
+                                    acts[cf.actionA].name, cf.deckA ? "B" : "A",
+                                    acts[cf.actionB].name, cf.deckB ? "B" : "A",
+                                    (int)cf.channel + 1, (int)cf.data1);
+            }
+        } else {
+            ImGui::TextColored(toVec4(col::Green), "✓ 0 conflictos MIDI en tus asignaciones personalizadas.");
+        }
+    }
     if (ImGui::BeginTable("asig", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV, ImVec2(0, -1))) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Acción", ImGuiTableColumnFlags_WidthFixed, 210 * s);
@@ -2437,33 +2509,43 @@ void App::drawMidiDialog() {
 
 void App::drawMandosCompatibles() {
     const float s = S();
-    const auto& cat = mandos::catalog();
-    ImGui::TextWrapped("Estos %d mandos se reconocen solos al enchufarlos, con sus botones y sus luces ya asignados "
-                       "(mapeos de Mixxx, software libre). Si el tuyo no está, usa el asistente.", (int)cat.size());
+    const auto& ucat = mandos::universalCatalog();
+    const auto& xmlCat = mandos::catalog();
+    ImGui::TextWrapped("Catálogo Universal Plug-and-Play: %d modelos registrados en 11 marcas (%d con mapeo nativo XML de Mixxx incluido "
+                       "y soporte de Stems por Pads, LEDs y aprendizaje directo).", (int)ucat.size(), (int)xmlCat.size());
     static char filtro[64] = "";
-    ImGui::SetNextItemWidth(300 * s);
-    ImGui::InputTextWithHint("##filtro", "Buscar (DDJ, Inpulse, Mixtrack…)", filtro, sizeof filtro);
+    static int brandIdx = 0;
+    const char* brands[] = {
+        "Todas las marcas (11)", "Pioneer DJ / AlphaTheta", "Denon DJ", "Numark", "Hercules",
+        "Native Instruments", "Reloop", "Roland", "Allen & Heath", "Akai Professional", "Behringer", "Vestax"
+    };
+    ImGui::SetNextItemWidth(220 * s);
+    ImGui::Combo("Marca", &brandIdx, brands, 12);
+    ImGui::SameLine(0, 10 * s);
+    ImGui::SetNextItemWidth(260 * s);
+    ImGui::InputTextWithHint("##filtro", "Buscar modelo (DDJ-FLX4, WeGO, Inpulse, Prime…)", filtro, sizeof filtro);
     std::string f = filtro;
     for (auto& c : f) c = (char)std::tolower((unsigned char)c);
-    if (ImGui::BeginTable("mandoscat", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp, ImVec2(0, -1))) {
+    if (ImGui::BeginTable("mandoscat", 4, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp, ImVec2(0, -1))) {
         ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("MANDO", ImGuiTableColumnFlags_None, 0.45f);
-        ImGui::TableSetupColumn("DESCRIPCIÓN Y AUTORES", ImGuiTableColumnFlags_None, 0.55f);
+        ImGui::TableSetupColumn("MARCA", ImGuiTableColumnFlags_WidthStretch, 0.24f);
+        ImGui::TableSetupColumn("MODELO", ImGuiTableColumnFlags_WidthStretch, 0.28f);
+        ImGui::TableSetupColumn("PROTOCOLO / DECKS", ImGuiTableColumnFlags_WidthStretch, 0.20f);
+        ImGui::TableSetupColumn("ESTADO DE VALIDACIÓN", ImGuiTableColumnFlags_WidthStretch, 0.28f);
         ImGui::TableHeadersRow();
-        for (auto& e : cat) {
-            std::string hay = e.name + " " + e.author + " " + e.description;
+        for (const auto& m : ucat) {
+            if (brandIdx > 0 && m.brand.find(brands[brandIdx]) == std::string::npos) continue;
+            std::string hay = m.brand + " " + m.model + " " + m.validationStatus;
             for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
             if (!f.empty() && hay.find(f) == std::string::npos) continue;
             ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextColored(toVec4(col::DeckA), "%s", m.brand.c_str());
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.model.c_str());
+            ImGui::TableNextColumn(); ImGui::TextDisabled("%s (%dD)", m.protocol.c_str(), m.decks);
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(e.name.c_str());
-            if (e.generic) { ImGui::SameLine(); ImGui::TextDisabled("(se elige a mano)"); }
-            ImGui::TableNextColumn();
-            std::string d = e.description;
-            for (auto& c : d) if (c == '\n' || c == '\r' || c == '\t') c = ' ';
-            if (d.size() > 110) d = d.substr(0, 110) + "…";
-            ImGui::TextDisabled("%s", d.empty() ? e.author.c_str() : d.c_str());
-            if (ImGui::IsItemHovered() && !e.author.empty()) ImGui::SetTooltip("Autores: %s", e.author.c_str());
+            const ImU32 stCol = m.validationStatus.find("Verificado") != std::string::npos ? col::Green :
+                                (m.validationStatus.find("Nativo") != std::string::npos ? col::DeckA : col::Amber);
+            ImGui::TextColored(toVec4(stCol), "%s", m.validationStatus.c_str());
         }
         ImGui::EndTable();
     }

@@ -359,6 +359,10 @@ bool MandoPuente::readReal(const std::string& g, const std::string& k, double& v
         if (k == "rate_dir") { v = 1; return true; }
         if (k == "rateEngine") { v = playing ? 1.0 + dk.pitch : 0; return true; }
         if (k == "keylock") { v = p.keyLock.load() ? 1 : 0; return true; }
+        if (k == "stem_vocal_enabled" || k == "stem_1_enabled") { v = !p.stemMute[0].load() ? 1 : 0; return true; }
+        if (k == "stem_drums_enabled" || k == "stem_2_enabled") { v = !p.stemMute[1].load() ? 1 : 0; return true; }
+        if (k == "stem_bass_enabled"  || k == "stem_3_enabled") { v = !p.stemMute[2].load() ? 1 : 0; return true; }
+        if (k == "stem_inst_enabled"  || k == "stem_4_enabled") { v = !p.stemMute[3].load() ? 1 : 0; return true; }
         if (k == "pitch" || k == "pitch_adjust") { v = p.keyShift.load(); return true; }
         if (k == "key" || k == "visual_key" || k == "file_key") { v = dk.meta.key >= 0 ? dk.meta.key + 1 : 0; return true; }
         if (k == "volume") { v = MxBehavior{MxBehavior::Audio, 0, 1, 1, -20, 0, 1}.paramToValue(p.fader.load()); return true; }
@@ -701,6 +705,14 @@ bool MandoPuente::writeReal(const std::string& g, const std::string& k, double v
         if (k == "rate_set_default" || k == "rate_set_zero") { if (on) { dk.pitch = 0; p.pitch = 0; } return true; }
         if (k == "bpm") { if (v > 0 && dk.meta.bpm > 0) { dk.pitch = std::clamp((float)(v / dk.meta.bpm - 1.0), -a.pitchRange(d), a.pitchRange(d)); p.pitch = dk.pitch; } return true; }
         if (k == "keylock") { p.keyLock = on; return true; }
+        if (k == "stem_vocal_toggle" || k == "stem_1_mute") { if (on) p.stemMute[0] = !p.stemMute[0].load(); return true; }
+        if (k == "stem_drums_toggle" || k == "stem_2_mute") { if (on) p.stemMute[1] = !p.stemMute[1].load(); return true; }
+        if (k == "stem_bass_toggle"  || k == "stem_3_mute") { if (on) p.stemMute[2] = !p.stemMute[2].load(); return true; }
+        if (k == "stem_inst_toggle"  || k == "stem_4_mute") { if (on) p.stemMute[3] = !p.stemMute[3].load(); return true; }
+        if (k == "stem_vocal_vol" || k == "stem_1_volume") { p.stemVol[0] = (float)std::clamp(v * 1.5, 0.0, 1.5); return true; }
+        if (k == "stem_drums_vol" || k == "stem_2_volume") { p.stemVol[1] = (float)std::clamp(v * 1.5, 0.0, 1.5); return true; }
+        if (k == "stem_bass_vol"  || k == "stem_3_volume") { p.stemVol[2] = (float)std::clamp(v * 1.5, 0.0, 1.5); return true; }
+        if (k == "stem_inst_vol"  || k == "stem_4_volume") { p.stemVol[3] = (float)std::clamp(v * 1.5, 0.0, 1.5); return true; }
         if (k == "pitch" || k == "pitch_adjust") { p.keyShift = (float)std::clamp(v, -6.0, 6.0); return true; }
         if (k == "pitch_up" || k == "pitch_down") { if (on) p.keyShift = std::clamp(p.keyShift.load() + (k == "pitch_up" ? 1.f : -1.f), -6.f, 6.f); return true; }
         if (k == "pitch_up_small" || k == "pitch_down_small") { if (on) p.keyShift = std::clamp(p.keyShift.load() + (k == "pitch_up_small" ? 0.1f : -0.1f), -6.f, 6.f); return true; }

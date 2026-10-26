@@ -67,4 +67,20 @@ bool loadMapping(const std::string& file, Mapping& m, std::string* err = nullptr
 int matchScore(const std::string& portName, const CatalogEntry& e);
 std::string bestMatch(const std::string& portName, int* score = nullptr);   // archivo o ""
 
+
+struct UniversalControllerModel {
+    std::string brand;             // Pioneer DJ / AlphaTheta, Denon DJ, Numark, Hercules, Native Instruments, Reloop, Roland, Allen & Heath, Akai Professional, Behringer, Vestax
+    std::string model;             // Modelo comercial
+    std::string protocol;          // MIDI USB / MIDI 14-bit / MIDI + HID
+    std::string validationStatus;  // "Verificado Hardware", "Mapeo Nativo Mixxx XML", "Perfil MIDI Estándar Auto-Adaptativo"
+    std::string mappingFile;       // Archivo .midi.xml asociado o "preset:wego" / "auto:standard"
+    int decks = 2;
+    int padsPerDeck = 8;
+    bool hasStemPads = true;
+    bool hasLedFeedback = true;
+};
+
+const std::vector<UniversalControllerModel>& universalCatalog();
+const UniversalControllerModel* identifyController(const std::string& portName);
+
 } // namespace rdj::mandos

@@ -441,6 +441,20 @@ void DeckEngine::render(float* L, float* R, int n, DeckParams& p, DeckStatus& s)
     }
     lastTrim_ = trim;
 
+    // 0.14.0 Pro: Stems en tiempo real por plato (Voz, Batería, Bajo, Instrumentos)
+    {
+        float stG[4], stFx[4], stPk[4] = {};
+        for (int k = 0; k < 4; ++k) {
+            const bool muted = p.stemMute[k].load(std::memory_order_relaxed);
+            stG[k] = muted ? 0.f : std::clamp(p.stemVol[k].load(std::memory_order_relaxed), 0.f, 1.5f);
+            stFx[k] = std::clamp(p.stemFx[k].load(std::memory_order_relaxed), 0.f, 1.f);
+        }
+        stemProc_.process(L, R, n, stG, stFx, stPk);
+        for (int k = 0; k < 4; ++k) {
+            s.stemPeak[k].store(stPk[k], std::memory_order_relaxed);
+        }
+    }
+
     const float gl = eqKnobToGain(p.eqLow.load(std::memory_order_relaxed));
     const float gm = eqKnobToGain(p.eqMid.load(std::memory_order_relaxed));
     const float gh = eqKnobToGain(p.eqHigh.load(std::memory_order_relaxed));
